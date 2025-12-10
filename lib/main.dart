@@ -60,8 +60,11 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
   DateTime lastSync = DateTime.now();
   
   Map<String, DeviceState> devices = {
-    'lamp_living': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'curtain_living': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    // Lantai 1
+    'lamp_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'curtain_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    // Lantai 2
+    'lamp_floor2': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
   };
   
   Timer? _sensorTimer;
@@ -418,26 +421,36 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                   
                   const SizedBox(height: 16),
                   
-                  // Device Cards - Ruang Tamu
+                  // Device Cards - Lantai 1
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 10),
-                    child: Text(
-                      'Ruang Tamu',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white.withOpacity(0.7),
-                        letterSpacing: 0.5,
-                      ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.home_rounded,
+                          color: Colors.white.withOpacity(0.7),
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Lantai 1',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white.withOpacity(0.85),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   ModernControlCard(
-                    title: 'Lampu',
+                    title: 'Lampu Lantai 1',
                     subtitle: 'LED Strip RGB',
-                    isOn: devices['lamp_living']?.isOn ?? false,
-                    isOnline: devices['lamp_living']?.isOnline ?? false,
-                    lastUpdate: devices['lamp_living']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('lamp_living', value),
+                    isOn: devices['lamp_floor1']?.isOn ?? false,
+                    isOnline: devices['lamp_floor1']?.isOnline ?? false,
+                    lastUpdate: devices['lamp_floor1']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('lamp_floor1', value),
                     activeColor: const Color(0xFFFFA726),
                     icon: '💡',
                   ),
@@ -445,12 +458,48 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                   ModernControlCard(
                     title: 'Smart Curtain',
                     subtitle: 'Motorized',
-                    isOn: devices['curtain_living']?.isOn ?? false,
-                    isOnline: devices['curtain_living']?.isOnline ?? false,
-                    lastUpdate: devices['curtain_living']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('curtain_living', value),
+                    isOn: devices['curtain_floor1']?.isOn ?? false,
+                    isOnline: devices['curtain_floor1']?.isOnline ?? false,
+                    lastUpdate: devices['curtain_floor1']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('curtain_floor1', value),
                     activeColor: const Color(0xFFEC407A),
                     icon: '🪟',
+                  ),
+                  
+                  const SizedBox(height: 20),
+                  
+                  // Device Cards - Lantai 2
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 10),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.stairs_rounded,
+                          color: Colors.white.withOpacity(0.7),
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Lantai 2',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white.withOpacity(0.85),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ModernControlCard(
+                    title: 'Lampu Lantai 2',
+                    subtitle: 'Smart LED Bulb',
+                    isOn: devices['lamp_floor2']?.isOn ?? false,
+                    isOnline: devices['lamp_floor2']?.isOnline ?? false,
+                    lastUpdate: devices['lamp_floor2']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('lamp_floor2', value),
+                    activeColor: const Color(0xFF66BB6A),
+                    icon: '💡',
                   ),
                   
                   const SizedBox(height: 24),
