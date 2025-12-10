@@ -1,6 +1,25 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math';
+// ganti dengan path projectmu jika Anda punya implementasi nyata:
+// import 'package:your_project/mqtt/mqtt_service.dart';   // ganti dengan path projectmu
+
+// Minimal local stub for MqttService used by this example.
+// Replace this stub with your real mqtt_service implementation.
+class MqttService {
+  void Function(String topic, String msg)? onMessage;
+
+  Future<void> connect() async {
+    // Implement real connection logic here.
+    // This stub just waits briefly to simulate async startup.
+    await Future.delayed(const Duration(milliseconds: 100));
+  }
+
+  // Optional helper to simulate incoming messages during development.
+  void simulateIncoming(String topic, String msg) {
+    if (onMessage != null) onMessage!(topic, msg);
+  }
+}
 
 void main() => runApp(const MyApp());
 
@@ -82,6 +101,44 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
   @override
   void initState() {
     super.initState();
+
+  final mqtt = MqttService();
+
+  mqtt.onMessage = (topic, msg) {
+    print("MQTT → $topic : $msg");
+
+    setState(() {
+      // SENSOR
+      if (topic == "home/sensors/temperature") {
+        final value = double.tryParse(msg) ?? 0;
+        temperature = SensorData(value, DateTime.now(), true);
+        temperatureHistory.add(value);
+      }
+
+      if (topic == "home/sensors/humidity") {
+        final value = double.tryParse(msg) ?? 0;
+        humidity = SensorData(value, DateTime.now(), true);
+        humidityHistory.add(value);
+      }
+
+      // STATUS PERANGKAT
+      if (topic.startsWith("home/devices/")) {
+        final device = topic.split("/").last;
+        final isOn = msg == "1";
+
+        if (devices.containsKey(device)) {
+          devices[device] = DeviceState(
+            isOn: isOn,
+            isOnline: true,
+            lastUpdate: DateTime.now(),
+          );
+        }
+      }
+    });
+  };
+
+  mqtt.connect();
+
     
     temperature = SensorData(25.5, DateTime.now(), true);
     humidity = SensorData(60.0, DateTime.now(), true);
@@ -139,6 +196,13 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
           isOnline: currentDevice.isOnline,
           lastUpdate: DateTime.now(),
         );
+        if (value) {
+          // Simulate sending MQTT command to turn on the device
+          print("MQTT ← home/devices/$deviceId : on");
+        } else {
+          // Simulate sending MQTT command to turn off the device
+          print("MQTT ← home/devices/$deviceId : off");
+        }
       }
     });
     
