@@ -694,6 +694,9 @@ class ModernControlCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final secondsAgo = now.difference(lastUpdate).inSeconds;
+    
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
@@ -737,7 +740,10 @@ class ModernControlCard extends StatelessWidget {
                 ),
               ),
               child: Center(
-                child: Text(icon, style: const TextStyle(fontSize: 26)),
+                child: Text(
+                  icon, 
+                  style: const TextStyle(fontSize: 26),
+                ),
               ),
             ),
             const SizedBox(width: 14),
@@ -809,7 +815,7 @@ class ModernControlCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        '${DateTime.now().difference(lastUpdate).inSeconds}s ago',
+                        '${secondsAgo}s ago',
                         style: TextStyle(
                           fontSize: 10,
                           color: Colors.grey[500],
