@@ -1,25 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math';
-// ganti dengan path projectmu jika Anda punya implementasi nyata:
-// import 'package:your_project/mqtt/mqtt_service.dart';   // ganti dengan path projectmu
-
-// Minimal local stub for MqttService used by this example.
-// Replace this stub with your real mqtt_service implementation.
-class MqttService {
-  void Function(String topic, String msg)? onMessage;
-
-  Future<void> connect() async {
-    // Implement real connection logic here.
-    // This stub just waits briefly to simulate async startup.
-    await Future.delayed(const Duration(milliseconds: 100));
-  }
-
-  // Optional helper to simulate incoming messages during development.
-  void simulateIncoming(String topic, String msg) {
-    if (onMessage != null) onMessage!(topic, msg);
-  }
-}
+import 'mqtt_service.dart';
 
 void main() => runApp(const MyApp());
 
@@ -79,66 +61,60 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
   
   Map<String, DeviceState> devices = {
     'lamp_living': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'fan_bedroom': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'lamp_bedroom': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'ac_living': DeviceState(isOn: false, isOnline: false, lastUpdate: DateTime.now()),
-    'lamp_bathroom': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'exhaust_bathroom': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'lamp_kitchen': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'hood_kitchen': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'tv_living': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
     'curtain_living': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
   };
   
   Timer? _sensorTimer;
   Timer? _syncTimer;
   late AnimationController _pulseController;
+  late MqttService mqttService;
   
-  String selectedRoom = 'Semua';
-  final List<String> rooms = ['Semua', 'Ruang Tamu', 'Kamar Tidur', 'Dapur', 'Kamar Mandi'];
   bool isAdaptiveMode = false;
 
   @override
   void initState() {
     super.initState();
 
-  final mqtt = MqttService();
+    mqttService = MqttService();
 
-  mqtt.onMessage = (topic, msg) {
-    print("MQTT → $topic : $msg");
+    mqttService.onMessage = (topic, msg) {
+      print("MQTT → $topic : $msg");
 
-    setState(() {
-      // SENSOR
-      if (topic == "home/sensors/temperature") {
-        final value = double.tryParse(msg) ?? 0;
-        temperature = SensorData(value, DateTime.now(), true);
-        temperatureHistory.add(value);
-      }
-
-      if (topic == "home/sensors/humidity") {
-        final value = double.tryParse(msg) ?? 0;
-        humidity = SensorData(value, DateTime.now(), true);
-        humidityHistory.add(value);
-      }
-
-      // STATUS PERANGKAT
-      if (topic.startsWith("home/devices/")) {
-        final device = topic.split("/").last;
-        final isOn = msg == "1";
-
-        if (devices.containsKey(device)) {
-          devices[device] = DeviceState(
-            isOn: isOn,
-            isOnline: true,
-            lastUpdate: DateTime.now(),
-          );
+      setState(() {
+        // SENSOR
+        if (topic == "home/sensors/temperature") {
+          final value = double.tryParse(msg) ?? 0;
+          temperature = SensorData(value, DateTime.now(), true);
+          temperatureHistory.add(value);
+          if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
         }
-      }
-    });
-  };
 
-  mqtt.connect();
+        if (topic == "home/sensors/humidity") {
+          final value = double.tryParse(msg) ?? 0;
+          humidity = SensorData(value, DateTime.now(), true);
+          humidityHistory.add(value);
+          if (humidityHistory.length > 20) humidityHistory.removeAt(0);
+        }
 
+        // STATUS PERANGKAT
+        if (topic.startsWith("home/devices/")) {
+          final device = topic.split("/").last;
+          final isOn = msg == "1" || msg.toLowerCase() == "on";
+
+          if (devices.containsKey(device)) {
+            devices[device] = DeviceState(
+              isOn: isOn,
+              isOnline: true,
+              lastUpdate: DateTime.now(),
+            );
+          }
+        }
+
+        lastSync = DateTime.now();
+      });
+    };
+
+    mqttService.connect();
     
     temperature = SensorData(25.5, DateTime.now(), true);
     humidity = SensorData(60.0, DateTime.now(), true);
@@ -153,8 +129,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
         final newTemp = Random().nextDouble() * 10 + 20;
         final newHumid = Random().nextDouble() * 30 + 50;
         
-        temperature = SensorData(newTemp, DateTime.now(), Random().nextBool() || true);
-        humidity = SensorData(newHumid, DateTime.now(), Random().nextBool() || true);
+        temperature = SensorData(newTemp, DateTime.now(), true);
+        humidity = SensorData(newHumid, DateTime.now(), true);
         
         temperatureHistory.add(newTemp);
         humidityHistory.add(newHumid);
@@ -168,11 +144,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
 
     _syncTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
       setState(() {
-        devices['ac_living'] = DeviceState(
-          isOn: devices['ac_living']!.isOn,
-          isOnline: Random().nextBool(),
-          lastUpdate: DateTime.now(),
-        );
+        lastSync = DateTime.now();
       });
     });
   }
@@ -182,6 +154,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
     _sensorTimer?.cancel();
     _syncTimer?.cancel();
     _pulseController.dispose();
+    mqttService.disconnect();
     super.dispose();
   }
 
@@ -196,15 +169,11 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
           isOnline: currentDevice.isOnline,
           lastUpdate: DateTime.now(),
         );
-        if (value) {
-          // Simulate sending MQTT command to turn on the device
-          print("MQTT ← home/devices/$deviceId : on");
-        } else {
-          // Simulate sending MQTT command to turn off the device
-          print("MQTT ← home/devices/$deviceId : off");
-        }
       }
     });
+
+    // Kirim perintah MQTT
+    mqttService.publish('home/devices/$deviceId/command', value ? '1' : '0');
     
     await Future.delayed(const Duration(milliseconds: 300));
     
@@ -229,6 +198,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
             isOnline: value.isOnline,
             lastUpdate: DateTime.now(),
           );
+          mqttService.publish('home/devices/$key/command', '0');
         }
       });
     });
@@ -435,232 +405,53 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                   
                   const SizedBox(height: 24),
                   
-                  // Room Filter Header
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Kontrol Perangkat',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          letterSpacing: 0.3,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.15),
-                            width: 1,
-                          ),
-                        ),
-                        child: DropdownButton<String>(
-                          value: selectedRoom,
-                          dropdownColor: const Color(0xFF2A5298),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          underline: Container(),
-                          icon: const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                          isDense: true,
-                          items: rooms.map((room) {
-                            return DropdownMenuItem(value: room, child: Text(room));
-                          }).toList(),
-                          onChanged: (value) {
-                            setState(() {
-                              selectedRoom = value!;
-                            });
-                          },
-                        ),
-                      ),
-                    ],
+                  // Header Kontrol Perangkat
+                  const Text(
+                    'Kontrol Perangkat',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 0.3,
+                    ),
                   ),
                   
                   const SizedBox(height: 16),
                   
                   // Device Cards - Ruang Tamu
-                  if (selectedRoom == 'Semua' || selectedRoom == 'Ruang Tamu') ...[
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 10),
-                      child: Text(
-                        'Ruang Tamu',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withOpacity(0.7),
-                          letterSpacing: 0.5,
-                        ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 10),
+                    child: Text(
+                      'Ruang Tamu',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white.withOpacity(0.7),
+                        letterSpacing: 0.5,
                       ),
                     ),
-                    ModernControlCard(
-                      title: 'Lampu',
-                      subtitle: 'LED Strip RGB',
-                      isOn: devices['lamp_living']?.isOn ?? false,
-                      isOnline: devices['lamp_living']?.isOnline ?? false,
-                      lastUpdate: devices['lamp_living']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('lamp_living', value),
-                      activeColor: const Color(0xFFFFA726),
-                      icon: '💡',
-                    ),
-                    const SizedBox(height: 10),
-                    ModernControlCard(
-                      title: 'AC',
-                      subtitle: 'Smart AC 1.5 PK',
-                      isOn: devices['ac_living']?.isOn ?? false,
-                      isOnline: devices['ac_living']?.isOnline ?? false,
-                      lastUpdate: devices['ac_living']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('ac_living', value),
-                      activeColor: const Color(0xFF66BB6A),
-                      icon: '❄️',
-                    ),
-                    const SizedBox(height: 10),
-                    ModernControlCard(
-                      title: 'Smart TV',
-                      subtitle: '55" 4K Android TV',
-                      isOn: devices['tv_living']?.isOn ?? false,
-                      isOnline: devices['tv_living']?.isOnline ?? false,
-                      lastUpdate: devices['tv_living']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('tv_living', value),
-                      activeColor: const Color(0xFF7E57C2),
-                      icon: '📺',
-                    ),
-                    const SizedBox(height: 10),
-                    ModernControlCard(
-                      title: 'Smart Curtain',
-                      subtitle: 'Motorized',
-                      isOn: devices['curtain_living']?.isOn ?? false,
-                      isOnline: devices['curtain_living']?.isOnline ?? false,
-                      lastUpdate: devices['curtain_living']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('curtain_living', value),
-                      activeColor: const Color(0xFFEC407A),
-                      icon: '🪟',
-                    ),
-                    const SizedBox(height: 20),
-                  ],
-                  
-                  // Device Cards - Kamar Tidur
-                  if (selectedRoom == 'Semua' || selectedRoom == 'Kamar Tidur') ...[
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 10),
-                      child: Text(
-                        'Kamar Tidur',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withOpacity(0.7),
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                    ModernControlCard(
-                      title: 'Kipas Angin',
-                      subtitle: 'Smart Fan',
-                      isOn: devices['fan_bedroom']?.isOn ?? false,
-                      isOnline: devices['fan_bedroom']?.isOnline ?? false,
-                      lastUpdate: devices['fan_bedroom']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('fan_bedroom', value),
-                      activeColor: const Color(0xFF42A5F5),
-                      icon: '🌀',
-                    ),
-                    const SizedBox(height: 10),
-                    ModernControlCard(
-                      title: 'Lampu Tidur',
-                      subtitle: 'Dimmable',
-                      isOn: devices['lamp_bedroom']?.isOn ?? false,
-                      isOnline: devices['lamp_bedroom']?.isOnline ?? false,
-                      lastUpdate: devices['lamp_bedroom']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('lamp_bedroom', value),
-                      activeColor: const Color(0xFFFFB74D),
-                      icon: '🛋️',
-                    ),
-                    const SizedBox(height: 20),
-                  ],
-                  
-                  // Device Cards - Kamar Mandi
-                  if (selectedRoom == 'Semua' || selectedRoom == 'Kamar Mandi') ...[
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 10),
-                      child: Text(
-                        'Kamar Mandi',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withOpacity(0.7),
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                    ModernControlCard(
-                      title: 'Lampu',
-                      subtitle: 'LED Waterproof',
-                      isOn: devices['lamp_bathroom']?.isOn ?? false,
-                      isOnline: devices['lamp_bathroom']?.isOnline ?? false,
-                      lastUpdate: devices['lamp_bathroom']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('lamp_bathroom', value),
-                      activeColor: const Color(0xFF26C6DA),
-                      icon: '💡',
-                    ),
-                    const SizedBox(height: 10),
-                    ModernControlCard(
-                      title: 'Exhaust Fan',
-                      subtitle: 'Ventilasi Otomatis',
-                      isOn: devices['exhaust_bathroom']?.isOn ?? false,
-                      isOnline: devices['exhaust_bathroom']?.isOnline ?? false,
-                      lastUpdate: devices['exhaust_bathroom']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('exhaust_bathroom', value),
-                      activeColor: const Color(0xFF78909C),
-                      icon: '💨',
-                    ),
-                    const SizedBox(height: 20),
-                  ],
-                  
-                  // Device Cards - Dapur
-                  if (selectedRoom == 'Semua' || selectedRoom == 'Dapur') ...[
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 10),
-                      child: Text(
-                        'Dapur',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withOpacity(0.7),
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                    ModernControlCard(
-                      title: 'Lampu Dapur',
-                      subtitle: 'LED Panel',
-                      isOn: devices['lamp_kitchen']?.isOn ?? false,
-                      isOnline: devices['lamp_kitchen']?.isOnline ?? false,
-                      lastUpdate: devices['lamp_kitchen']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('lamp_kitchen', value),
-                      activeColor: const Color(0xFFFFCA28),
-                      icon: '💡',
-                    ),
-                    const SizedBox(height: 10),
-                    ModernControlCard(
-                      title: 'Cooker Hood',
-                      subtitle: 'Smart Exhaust',
-                      isOn: devices['hood_kitchen']?.isOn ?? false,
-                      isOnline: devices['hood_kitchen']?.isOnline ?? false,
-                      lastUpdate: devices['hood_kitchen']?.lastUpdate ?? DateTime.now(),
-                      onToggle: (value) => toggleDevice('hood_kitchen', value),
-                      activeColor: const Color(0xFF8D6E63),
-                      icon: '🔥',
-                    ),
-                    const SizedBox(height: 20),
-                  ],
+                  ),
+                  ModernControlCard(
+                    title: 'Lampu',
+                    subtitle: 'LED Strip RGB',
+                    isOn: devices['lamp_living']?.isOn ?? false,
+                    isOnline: devices['lamp_living']?.isOnline ?? false,
+                    lastUpdate: devices['lamp_living']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('lamp_living', value),
+                    activeColor: const Color(0xFFFFA726),
+                    icon: '💡',
+                  ),
+                  const SizedBox(height: 10),
+                  ModernControlCard(
+                    title: 'Smart Curtain',
+                    subtitle: 'Motorized',
+                    isOn: devices['curtain_living']?.isOn ?? false,
+                    isOnline: devices['curtain_living']?.isOnline ?? false,
+                    lastUpdate: devices['curtain_living']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('curtain_living', value),
+                    activeColor: const Color(0xFFEC407A),
+                    icon: '🪟',
+                  ),
                   
                   const SizedBox(height: 24),
                 ],
@@ -1061,7 +852,6 @@ class QuickActionButton extends StatelessWidget {
   }
 }
 
-// Extension helper untuk darken color//
 extension ColorExtension on Color {
   Color darken(double amount) {
     assert(amount >= 0 && amount <= 1);

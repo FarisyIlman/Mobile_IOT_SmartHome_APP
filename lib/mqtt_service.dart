@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 
@@ -8,7 +9,8 @@ class MqttService {
 
   late MqttServerClient client;
 
-  Function(String topic, String message)? onMessage;
+  void Function(String topic, String msg)? onMessage;
+  bool _isConnected = false;
 
   // --------------------------------------
   // MQTT TOPICS (DART VERSION)
@@ -68,15 +70,45 @@ class MqttService {
     }
   }
 
+  void disconnect() {
+    _isConnected = false;
+    client.disconnect();
+    print('MQTT Service Disconnected');
+  }
+
   void subscribe(String topic) {
     client.subscribe(topic, MqttQos.atMostOnce);
     print("Subscribed to: $topic");
   }
 
   void publish(String topic, String message) {
+    if (!_isConnected) {
+      print('MQTT not connected');
+      return;
+    }
     final builder = MqttClientPayloadBuilder();
     builder.addString(message);
     client.publishMessage(topic, MqttQos.atMostOnce, builder.payload!);
     print("Publish: $topic => $message");
+  }
+
+  void _startSimulation() {
+    // Simulasi sensor data setiap 3 detik
+    Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!_isConnected) {
+        timer.cancel();
+        return;
+      }
+      
+      // Simulasi data temperature dan humidity dari MQTT broker
+      // Ganti dengan implementasi real MQTT jika sudah tersedia
+    });
+  }
+
+  // Helper untuk simulasi incoming message saat development
+  void simulateIncoming(String topic, String msg) {
+    if (onMessage != null) {
+      onMessage!(topic, msg);
+    }
   }
 }
