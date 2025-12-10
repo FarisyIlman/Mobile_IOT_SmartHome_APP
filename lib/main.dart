@@ -71,6 +71,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
   };
   
   Timer? _syncTimer;
+  Timer? _sensorTimer;
   late AnimationController _pulseController;
   late MqttService mqttService;
   
@@ -96,11 +97,44 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
     mqttService = MqttService();
     _setupMqttConnection();
 
+    // 🤖 Timer untuk simulasi sensor (agar AI bisa jalan meskipun MQTT belum connect)
+    _sensorTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (mounted) {
+        setState(() {
+          // Simulasi data sensor dengan random
+          final Random random = Random();
+          final newTemp = 20.0 + random.nextDouble() * 15; // 20-35°C
+          final newHumid = 40.0 + random.nextDouble() * 40; // 40-80%
+          
+          temperature = SensorData(newTemp, DateTime.now(), true);
+          humidity = SensorData(newHumid, DateTime.now(), true);
+          
+          temperatureHistory.add(newTemp);
+          humidityHistory.add(newHumid);
+          
+          if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
+          if (humidityHistory.length > 20) humidityHistory.removeAt(0);
+          
+          lastSync = DateTime.now();
+          
+          // 🤖 Jalankan AI Classification
+          _runAIClassification();
+        });
+      }
+    });
+
     _syncTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
           lastSync = DateTime.now();
         });
+      }
+    });
+    
+    // 🤖 Jalankan AI pertama kali
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _runAIClassification();
       }
     });
   }
@@ -219,6 +253,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _sensorTimer?.cancel();
     _pulseController.dispose();
     mqttService.disconnect();
     super.dispose();

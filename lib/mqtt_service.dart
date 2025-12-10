@@ -1,14 +1,15 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:mqtt_client/mqtt_browser_client.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class MqttService {
   static final MqttService _instance = MqttService._internal();
   factory MqttService() => _instance;
   MqttService._internal();
 
-  MqttServerClient? client;
+  MqttClient? client;
 
   void Function(String topic, String msg)? onMessage;
   bool _isConnected = false;
@@ -16,8 +17,9 @@ class MqttService {
   // --------------------------------------
   // MQTT CONFIGURATION
   // --------------------------------------
-  static const String MQTT_BROKER = '192.168.1.100';  // ⬅️ Ganti dengan IP broker Anda
+  static const String MQTT_BROKER = 'broker.hivemq.com';  // Public MQTT Broker
   static const int MQTT_PORT = 1883;
+  static const String MQTT_WS_URL = 'ws://broker.hivemq.com:8000/mqtt';  // WebSocket untuk Web
 
   // --------------------------------------
   // MQTT TOPICS
@@ -47,12 +49,21 @@ class MqttService {
       final String clientId = 'flutter_smart_home_${DateTime.now().millisecondsSinceEpoch}';
       
       print('🔌 Creating MQTT Client...');
-      print('📍 Broker: $MQTT_BROKER:$MQTT_PORT');
+      
+      // Gunakan WebSocket untuk Web, TCP untuk Mobile/Desktop
+      if (kIsWeb) {
+        print('🌐 Platform: Web (using WebSocket)');
+        print('📍 Broker: $MQTT_WS_URL');
+        client = MqttBrowserClient(MQTT_WS_URL, clientId);
+      } else {
+        print('📱 Platform: Mobile/Desktop (using TCP)');
+        print('📍 Broker: $MQTT_BROKER:$MQTT_PORT');
+        client = MqttServerClient(MQTT_BROKER, clientId);
+        (client as MqttServerClient).port = MQTT_PORT;
+      }
+      
       print('🆔 Client ID: $clientId');
       
-      client = MqttServerClient(MQTT_BROKER, clientId);
-      
-      client!.port = MQTT_PORT;
       client!.keepAlivePeriod = 60;
       client!.logging(on: true);
       client!.autoReconnect = true;
