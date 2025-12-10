@@ -61,13 +61,14 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
   
   Map<String, DeviceState> devices = {
     // Lantai 1
-    'lamp_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'curtain_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'led_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'servo_door': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'fan_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
     // Lantai 2
-    'lamp_floor2': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'led1_floor2': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'led2_floor2': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
   };
   
-  Timer? _sensorTimer;
   Timer? _syncTimer;
   late AnimationController _pulseController;
   late MqttService mqttService;
@@ -78,47 +79,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
   void initState() {
     super.initState();
 
-    mqttService = MqttService();
-
-    mqttService.onMessage = (topic, msg) {
-      print("MQTT → $topic : $msg");
-
-      setState(() {
-        // SENSOR
-        if (topic == "home/sensors/temperature") {
-          final value = double.tryParse(msg) ?? 0;
-          temperature = SensorData(value, DateTime.now(), true);
-          temperatureHistory.add(value);
-          if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
-        }
-
-        if (topic == "home/sensors/humidity") {
-          final value = double.tryParse(msg) ?? 0;
-          humidity = SensorData(value, DateTime.now(), true);
-          humidityHistory.add(value);
-          if (humidityHistory.length > 20) humidityHistory.removeAt(0);
-        }
-
-        // STATUS PERANGKAT
-        if (topic.startsWith("home/devices/")) {
-          final device = topic.split("/").last;
-          final isOn = msg == "1" || msg.toLowerCase() == "on";
-
-          if (devices.containsKey(device)) {
-            devices[device] = DeviceState(
-              isOn: isOn,
-              isOnline: true,
-              lastUpdate: DateTime.now(),
-            );
-          }
-        }
-
-        lastSync = DateTime.now();
-      });
-    };
-
-    mqttService.connect();
-    
     temperature = SensorData(25.5, DateTime.now(), true);
     humidity = SensorData(60.0, DateTime.now(), true);
     
@@ -127,34 +87,125 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
-    _sensorTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      setState(() {
-        final newTemp = Random().nextDouble() * 10 + 20;
-        final newHumid = Random().nextDouble() * 30 + 50;
-        
-        temperature = SensorData(newTemp, DateTime.now(), true);
-        humidity = SensorData(newHumid, DateTime.now(), true);
-        
-        temperatureHistory.add(newTemp);
-        humidityHistory.add(newHumid);
-        
-        if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
-        if (humidityHistory.length > 20) humidityHistory.removeAt(0);
-        
-        lastSync = DateTime.now();
-      });
-    });
+    mqttService = MqttService();
+    _setupMqttConnection();
 
-    _syncTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+    _syncTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          lastSync = DateTime.now();
+        });
+      }
+    });
+  }
+
+  void _setupMqttConnection() async {
+    mqttService.onMessage = (topic, msg) {
+      print("📨 MQTT Message: $topic => $msg");
+
+      if (!mounted) return;
+
       setState(() {
+        // Sensor Data
+        if (topic == MqttService.TOPIC_SUHU) {
+          final value = double.tryParse(msg) ?? 0;
+          temperature = SensorData(value, DateTime.now(), true);
+          temperatureHistory.add(value);
+          if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
+        }
+
+        if (topic == MqttService.TOPIC_LEMBAP) {
+          final value = double.tryParse(msg) ?? 0;
+          humidity = SensorData(value, DateTime.now(), true);
+          humidityHistory.add(value);
+          if (humidityHistory.length > 20) humidityHistory.removeAt(0);
+        }
+
+        // Device Status - Lantai 1
+        if (topic == MqttService.TOPIC_STATUS_LED_FLOOR1) {
+          final isOn = msg == "1" || msg.toLowerCase() == "on";
+          devices['led_floor1'] = DeviceState(
+            isOn: isOn,
+            isOnline: true,
+            lastUpdate: DateTime.now(),
+          );
+        }
+
+        if (topic == MqttService.TOPIC_STATUS_SERVO_DOOR) {
+          final isOn = msg == "1" || msg.toLowerCase() == "open";
+          devices['servo_door'] = DeviceState(
+            isOn: isOn,
+            isOnline: true,
+            lastUpdate: DateTime.now(),
+          );
+        }
+
+        if (topic == MqttService.TOPIC_STATUS_FAN) {
+          final isOn = msg == "1" || msg.toLowerCase() == "on";
+          devices['fan_floor1'] = DeviceState(
+            isOn: isOn,
+            isOnline: true,
+            lastUpdate: DateTime.now(),
+          );
+        }
+
+        // Device Status - Lantai 2
+        if (topic == MqttService.TOPIC_STATUS_LED1_FLOOR2) {
+          final isOn = msg == "1" || msg.toLowerCase() == "on";
+          devices['led1_floor2'] = DeviceState(
+            isOn: isOn,
+            isOnline: true,
+            lastUpdate: DateTime.now(),
+          );
+        }
+
+        if (topic == MqttService.TOPIC_STATUS_LED2_FLOOR2) {
+          final isOn = msg == "1" || msg.toLowerCase() == "on";
+          devices['led2_floor2'] = DeviceState(
+            isOn: isOn,
+            isOnline: true,
+            lastUpdate: DateTime.now(),
+          );
+        }
+
         lastSync = DateTime.now();
       });
-    });
+    };
+
+    try {
+      await mqttService.connect();
+      print('✅ MQTT Connection Initialized');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Terhubung ke MQTT Broker'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ MQTT Connection Failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Gagal terhubung ke MQTT Broker\n$e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () => _setupMqttConnection(),
+            ),
+          ),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
-    _sensorTimer?.cancel();
     _syncTimer?.cancel();
     _pulseController.dispose();
     mqttService.disconnect();
@@ -175,20 +226,57 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
       }
     });
 
-    // Kirim perintah MQTT
-    mqttService.publish('home/devices/$deviceId/command', value ? '1' : '0');
+    String topic = '';
+    switch (deviceId) {
+      case 'led_floor1':
+        topic = MqttService.TOPIC_CMD_LED_FLOOR1;
+        break;
+      case 'servo_door':
+        topic = MqttService.TOPIC_CMD_SERVO_DOOR;
+        break;
+      case 'fan_floor1':
+        topic = MqttService.TOPIC_CMD_FAN;
+        break;
+      case 'led1_floor2':
+        topic = MqttService.TOPIC_CMD_LED1_FLOOR2;
+        break;
+      case 'led2_floor2':
+        topic = MqttService.TOPIC_CMD_LED2_FLOOR2;
+        break;
+    }
+
+    if (topic.isNotEmpty) {
+      mqttService.publish(topic, value ? '1' : '0');
+    }
     
     await Future.delayed(const Duration(milliseconds: 300));
     
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Perintah terkirim: ${value ? "Nyalakan" : "Matikan"} perangkat'),
+          content: Text('${value ? "Nyalakan" : "Matikan"} ${_getDeviceName(deviceId)}'),
           duration: const Duration(seconds: 1),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
         ),
       );
+    }
+  }
+
+  String _getDeviceName(String deviceId) {
+    switch (deviceId) {
+      case 'led_floor1':
+        return 'LED Lantai 1';
+      case 'servo_door':
+        return 'Pintu Servo';
+      case 'fan_floor1':
+        return 'Kipas';
+      case 'led1_floor2':
+        return 'LED 1 Lantai 2';
+      case 'led2_floor2':
+        return 'LED 2 Lantai 2';
+      default:
+        return deviceId.replaceAll('_', ' ');
     }
   }
 
@@ -201,7 +289,29 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
             isOnline: value.isOnline,
             lastUpdate: DateTime.now(),
           );
-          mqttService.publish('home/devices/$key/command', '0');
+
+          String topic = '';
+          switch (key) {
+            case 'led_floor1':
+              topic = MqttService.TOPIC_CMD_LED_FLOOR1;
+              break;
+            case 'servo_door':
+              topic = MqttService.TOPIC_CMD_SERVO_DOOR;
+              break;
+            case 'fan_floor1':
+              topic = MqttService.TOPIC_CMD_FAN;
+              break;
+            case 'led1_floor2':
+              topic = MqttService.TOPIC_CMD_LED1_FLOOR2;
+              break;
+            case 'led2_floor2':
+              topic = MqttService.TOPIC_CMD_LED2_FLOOR2;
+              break;
+          }
+
+          if (topic.isNotEmpty) {
+            mqttService.publish(topic, '0');
+          }
         }
       });
     });
@@ -296,12 +406,12 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                                 Container(
                                   width: 7,
                                   height: 7,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.greenAccent,
+                                  decoration: BoxDecoration(
+                                    color: mqttService.isConnected ? Colors.greenAccent : Colors.redAccent,
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.greenAccent,
+                                        color: mqttService.isConnected ? Colors.greenAccent : Colors.redAccent,
                                         blurRadius: 4,
                                         spreadRadius: 1,
                                       ),
@@ -309,9 +419,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                                   ),
                                 ),
                                 const SizedBox(width: 6),
-                                const Text(
-                                  'Online',
-                                  style: TextStyle(
+                                Text(
+                                  mqttService.isConnected ? 'Online' : 'Offline',
+                                  style: const TextStyle(
                                     fontSize: 11,
                                     color: Colors.white,
                                     fontWeight: FontWeight.w600,
@@ -421,7 +531,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                   
                   const SizedBox(height: 16),
                   
-                  // Device Cards - Lantai 1
+                  // ========== LANTAI 1 ==========
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 10),
                     child: Row(
@@ -444,31 +554,48 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       ],
                     ),
                   ),
+                  
+                  // LED Lantai 1
                   ModernControlCard(
-                    title: 'Lampu Lantai 1',
-                    subtitle: 'LED Strip RGB',
-                    isOn: devices['lamp_floor1']?.isOn ?? false,
-                    isOnline: devices['lamp_floor1']?.isOnline ?? false,
-                    lastUpdate: devices['lamp_floor1']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('lamp_floor1', value),
+                    title: 'LED Lantai 1',
+                    subtitle: 'Smart LED Strip',
+                    isOn: devices['led_floor1']?.isOn ?? false,
+                    isOnline: devices['led_floor1']?.isOnline ?? false,
+                    lastUpdate: devices['led_floor1']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('led_floor1', value),
                     activeColor: const Color(0xFFFFA726),
                     icon: '💡',
                   ),
                   const SizedBox(height: 10),
+                  
+                  // Servo Door
                   ModernControlCard(
-                    title: 'Smart Curtain',
-                    subtitle: 'Motorized',
-                    isOn: devices['curtain_floor1']?.isOn ?? false,
-                    isOnline: devices['curtain_floor1']?.isOnline ?? false,
-                    lastUpdate: devices['curtain_floor1']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('curtain_floor1', value),
-                    activeColor: const Color(0xFFEC407A),
-                    icon: '🪟',
+                    title: 'Pintu Servo',
+                    subtitle: 'Automatic Door',
+                    isOn: devices['servo_door']?.isOn ?? false,
+                    isOnline: devices['servo_door']?.isOnline ?? false,
+                    lastUpdate: devices['servo_door']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('servo_door', value),
+                    activeColor: const Color(0xFF42A5F5),
+                    icon: '🚪',
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  // Kipas
+                  ModernControlCard(
+                    title: 'Kipas Angin',
+                    subtitle: 'Smart Fan',
+                    isOn: devices['fan_floor1']?.isOn ?? false,
+                    isOnline: devices['fan_floor1']?.isOnline ?? false,
+                    lastUpdate: devices['fan_floor1']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('fan_floor1', value),
+                    activeColor: const Color(0xFF26C6DA),
+                    icon: '🌀',
                   ),
                   
                   const SizedBox(height: 20),
                   
-                  // Device Cards - Lantai 2
+                  // ========== LANTAI 2 ==========
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 10),
                     child: Row(
@@ -491,14 +618,29 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       ],
                     ),
                   ),
+                  
+                  // LED 1 Lantai 2
                   ModernControlCard(
-                    title: 'Lampu Lantai 2',
+                    title: 'LED 1 Lantai 2',
                     subtitle: 'Smart LED Bulb',
-                    isOn: devices['lamp_floor2']?.isOn ?? false,
-                    isOnline: devices['lamp_floor2']?.isOnline ?? false,
-                    lastUpdate: devices['lamp_floor2']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('lamp_floor2', value),
+                    isOn: devices['led1_floor2']?.isOn ?? false,
+                    isOnline: devices['led1_floor2']?.isOnline ?? false,
+                    lastUpdate: devices['led1_floor2']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('led1_floor2', value),
                     activeColor: const Color(0xFF66BB6A),
+                    icon: '💡',
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  // LED 2 Lantai 2
+                  ModernControlCard(
+                    title: 'LED 2 Lantai 2',
+                    subtitle: 'Smart LED Bulb',
+                    isOn: devices['led2_floor2']?.isOn ?? false,
+                    isOnline: devices['led2_floor2']?.isOnline ?? false,
+                    lastUpdate: devices['led2_floor2']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('led2_floor2', value),
+                    activeColor: const Color(0xFFAB47BC),
                     icon: '💡',
                   ),
                   
