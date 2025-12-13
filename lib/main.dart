@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'mqtt_service.dart';
-import 'ai_service.dart';
 
 void main() => runApp(const MyApp());
 
@@ -76,16 +75,12 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   };
 
   Timer? _syncTimer;
+  Timer? _sensorTimer;
   late AnimationController _pulseController;
   late MqttService mqttService;
   late AIService aiService;
 
   bool isAdaptiveMode = false;
-  bool isAutoControlEnabled = false;
-  Timer? _autoControlTimer;
-
-  EnvironmentCondition? currentCondition;
-  AIRecommendation? currentRecommendation;
 
   @override
   void initState() {
@@ -102,7 +97,6 @@ class _MonitoringScreenState extends State<MonitoringScreen>
     mqttService = MqttService();
     aiService = AIService();
     _setupMqttConnection();
-    _updateAIAnalysis();
 
     _syncTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
@@ -110,6 +104,13 @@ class _MonitoringScreenState extends State<MonitoringScreen>
           lastSync = DateTime.now();
           _updateAIAnalysis();
         });
+      }
+    });
+    
+    // 🤖 Jalankan AI pertama kali
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _runAIClassification();
       }
     });
   }
@@ -127,6 +128,9 @@ class _MonitoringScreenState extends State<MonitoringScreen>
           temperature = SensorData(value, DateTime.now(), true);
           temperatureHistory.add(value);
           if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
+          
+          // 🤖 Run AI Classification setelah sensor update
+          _runAIClassification();
         }
 
         if (topic == MqttService.TOPIC_LEMBAP) {
@@ -134,6 +138,9 @@ class _MonitoringScreenState extends State<MonitoringScreen>
           humidity = SensorData(value, DateTime.now(), true);
           humidityHistory.add(value);
           if (humidityHistory.length > 20) humidityHistory.removeAt(0);
+          
+          // 🤖 Run AI Classification setelah sensor update
+          _runAIClassification();
         }
 
         // Device Status - Lantai 1
@@ -343,7 +350,6 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   @override
   void dispose() {
     _syncTimer?.cancel();
-    _autoControlTimer?.cancel();
     _pulseController.dispose();
     mqttService.disconnect();
     super.dispose();
@@ -472,6 +478,273 @@ class _MonitoringScreenState extends State<MonitoringScreen>
     if (recent.last < avg - 0.5) return '↓';
     return '→';
   }
+
+  // 🤖 ==================== AI METHODS ====================
+  
+  void _runAIClassification() {
+    _aiResult = _aiClassifier.classifyRoom(temperature.value, humidity.value);
+    
+    print('🤖 AI Classification:');
+    print('   Kondisi: ${_aiResult!['kondisi']} ${_aiResult!['emoji']}');
+    print('   Confidence: ${(_aiResult!['confidence'] * 100).toStringAsFixed(1)}%');
+    print('   Rekomendasi: ${_aiResult!['rekomendasi']}');
+    
+    // 🔔 Tampilkan notifikasi AI
+    _showAINotification(_aiResult!);
+    
+    // ✅ Auto Control Logic
+    if (_isAutoControlEnabled && _aiResult != null) {
+      _executeAutoControl();
+    }
+    
+    // ✅ Emergency Alert
+    if (_aiClassifier.needsEmergencyAction(temperature.value, humidity.value)) {
+      _showEmergencyAlert();
+    }
+  }
+
+  void _showAINotification(Map<String, dynamic> aiResult) {
+    String kondisi = aiResult['kondisi'];
+    String emoji = aiResult['emoji'];
+    String message = '';
+    Color backgroundColor = Colors.blue;
+    
+    switch (kondisi) {
+      case 'Panas':
+        message = '$emoji Ruangan Panas! Kipas akan dinyalakan otomatis';
+        backgroundColor = Colors.red.shade400;
+        break;
+      case 'Dingin':
+        message = '$emoji Ruangan Dingin! Kipas dimatikan, LED dinyalakan';
+        backgroundColor = Colors.blue.shade400;
+        break;
+      case 'Lembap':
+        message = '$emoji Kelembapan Tinggi! Kipas dinyalakan untuk sirkulasi';
+        backgroundColor = Colors.cyan.shade400;
+        break;
+      case 'Nyaman':
+        message = '$emoji Kondisi Ruangan Ideal! Tidak perlu tindakan';
+        backgroundColor = Colors.green.shade400;
+        break;
+      default:
+        message = '$emoji Kondisi Normal';
+        backgroundColor = Colors.orange.shade400;
+    }
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.smart_toy, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: backgroundColor,
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        action: SnackBarAction(
+          label: 'OK',
+          textColor: Colors.white,
+          onPressed: () {},
+        ),
+      ),
+    );
+  }
+
+  void _executeAutoControl() {
+    var commands = _aiClassifier.getAutoControlCommands(_aiResult!);
+    
+    commands.forEach((device, action) {
+      print('🤖 Auto Control: $device → $action');
+      
+      if (device == 'kipas') {
+        bool shouldBeOn = action == 'ON';
+        bool currentlyOn = devices['fan_floor1']?.isOn ?? false;
+        
+        if (shouldBeOn != currentlyOn) {
+          toggleDevice('fan_floor1', shouldBeOn);
+        }
+      }
+      
+      if (device == 'lampu') {
+        bool shouldBeOn = action == 'ON';
+        bool currentlyOn = devices['led_floor1']?.isOn ?? false;
+        
+        if (shouldBeOn != currentlyOn) {
+          toggleDevice('led_floor1', shouldBeOn);
+        }
+      }
+    });
+  }
+
+  void _showEmergencyAlert() {
+    String message = _aiClassifier.getEmergencyMessage(temperature.value, humidity.value);
+    if (message.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () {},
+          ),
+        ),
+      );
+    }
+  }
+
+  String _getAITrend() {
+    return _aiClassifier.predictTrend(temperatureHistory);
+  }
+
+  Widget _buildAINotificationBanner() {
+    if (_aiResult == null) return const SizedBox.shrink();
+    
+    String kondisi = _aiResult!['kondisi'];
+    bool showBanner = kondisi == 'Panas' || kondisi == 'Dingin' || kondisi == 'Lembap';
+    
+    if (!showBanner) return const SizedBox.shrink();
+    
+    IconData icon;
+    String actionText = '';
+    Color bannerColor;
+    
+    switch (kondisi) {
+      case 'Panas':
+        icon = Icons.ac_unit;
+        actionText = '⚡ Action: Kipas akan DINYALAKAN untuk menurunkan suhu';
+        bannerColor = Colors.red.shade300;
+        break;
+      case 'Dingin':
+        icon = Icons.wb_sunny;
+        actionText = '⚡ Action: Kipas DIMATIKAN, LED DINYALAKAN untuk kehangatan';
+        bannerColor = Colors.blue.shade300;
+        break;
+      case 'Lembap':
+        icon = Icons.water_drop;
+        actionText = '⚡ Action: Kipas DINYALAKAN untuk sirkulasi udara';
+        bannerColor = Colors.cyan.shade300;
+        break;
+      default:
+        return const SizedBox.shrink();
+    }
+    
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bannerColor,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.3),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'AI Recommendation',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  actionText,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_isAutoControlEnabled)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'AUTO',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmergencyWarningBanner() {
+    if (_aiResult == null) return const SizedBox.shrink();
+    
+    if (!_aiClassifier.needsEmergencyAction(temperature.value, humidity.value)) {
+      return const SizedBox.shrink();
+    }
+    
+    String message = _aiClassifier.getEmergencyMessage(temperature.value, humidity.value);
+    
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.red.shade700,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white, width: 2),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==================== END AI METHODS ====================
 
   @override
   Widget build(BuildContext context) {
@@ -628,7 +901,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
                   ),
 
                   const SizedBox(height: 20),
-
+                  
                   // Quick Actions
                   Row(
                     children: [
