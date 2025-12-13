@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:math';
 import 'mqtt_service.dart';
+import 'ai_service.dart';
 
 void main() => runApp(const MyApp());
 
@@ -51,29 +51,41 @@ class MonitoringScreen extends StatefulWidget {
   State<MonitoringScreen> createState() => _MonitoringScreenState();
 }
 
-class _MonitoringScreenState extends State<MonitoringScreen> with TickerProviderStateMixin {
+class _MonitoringScreenState extends State<MonitoringScreen>
+    with TickerProviderStateMixin {
   final List<double> temperatureHistory = [25.5];
   final List<double> humidityHistory = [60.0];
-  
+
   late SensorData temperature;
   late SensorData humidity;
   DateTime lastSync = DateTime.now();
-  
+
   Map<String, DeviceState> devices = {
     // Lantai 1
-    'led_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'servo_door': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'fan_floor1': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'led_floor1':
+        DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'servo_door':
+        DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'fan_floor1':
+        DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
     // Lantai 2
-    'led1_floor2': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'led2_floor2': DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'led1_floor2':
+        DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
+    'led2_floor2':
+        DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
   };
-  
+
   Timer? _syncTimer;
   late AnimationController _pulseController;
   late MqttService mqttService;
-  
+  late AIService aiService;
+
   bool isAdaptiveMode = false;
+  bool isAutoControlEnabled = false;
+  Timer? _autoControlTimer;
+
+  EnvironmentCondition? currentCondition;
+  AIRecommendation? currentRecommendation;
 
   @override
   void initState() {
@@ -81,19 +93,22 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
 
     temperature = SensorData(25.5, DateTime.now(), true);
     humidity = SensorData(60.0, DateTime.now(), true);
-    
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
     mqttService = MqttService();
+    aiService = AIService();
     _setupMqttConnection();
+    _updateAIAnalysis();
 
     _syncTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
           lastSync = DateTime.now();
+          _updateAIAnalysis();
         });
       }
     });
@@ -175,7 +190,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
     try {
       await mqttService.connect();
       print('✅ MQTT Connection Initialized');
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -204,9 +219,131 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
     }
   }
 
+  // ========== AI ANALYSIS & AUTO CONTROL ==========
+
+  void _updateAIAnalysis() {
+    currentCondition =
+        aiService.classifyEnvironment(temperature.value, humidity.value);
+    currentRecommendation = aiService.generateRecommendation(
+      temperature.value,
+      humidity.value,
+      DateTime.now(),
+    );
+  }
+
+  void toggleAutoControl() {
+    setState(() {
+      isAutoControlEnabled = !isAutoControlEnabled;
+    });
+
+    if (isAutoControlEnabled) {
+      // Jalankan auto control pertama kali
+      _executeAutoControl();
+
+      // Setup timer untuk auto control berkala (setiap 30 detik)
+      _autoControlTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+        if (mounted && isAutoControlEnabled) {
+          _executeAutoControl();
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.smart_toy, color: Colors.white),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                    '🤖 Auto Control diaktifkan - AI akan mengatur perangkat secara otomatis'),
+              ),
+            ],
+          ),
+          backgroundColor: Color(0xFF4CAF50),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.all(16),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    } else {
+      _autoControlTimer?.cancel();
+      _autoControlTimer = null;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.power_settings_new, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Auto Control dinonaktifkan'),
+            ],
+          ),
+          backgroundColor: Color(0xFFFF5722),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.all(16),
+        ),
+      );
+    }
+  }
+
+  void _executeAutoControl() {
+    if (!mounted || !isAutoControlEnabled) return;
+
+    // Dapatkan state device saat ini
+    Map<String, bool> currentStates = {};
+    devices.forEach((key, value) {
+      currentStates[key] = value.isOn;
+    });
+
+    // Generate keputusan dari AI
+    final decision = aiService.generateAutoControl(
+      temperature.value,
+      humidity.value,
+      DateTime.now(),
+      currentStates,
+    );
+
+    // Terapkan keputusan ke setiap device
+    decision.deviceActions.forEach((deviceId, shouldTurnOn) {
+      if (devices.containsKey(deviceId)) {
+        final currentState = devices[deviceId]?.isOn ?? false;
+
+        // Hanya ubah jika berbeda dari state saat ini
+        if (currentState != shouldTurnOn) {
+          toggleDevice(deviceId, shouldTurnOn);
+        }
+      }
+    });
+
+    // Tampilkan notifikasi
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '🤖 ${decision.reason}',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF2196F3),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _autoControlTimer?.cancel();
     _pulseController.dispose();
     mqttService.disconnect();
     super.dispose();
@@ -214,7 +351,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
 
   void toggleDevice(String deviceId, bool value) async {
     if (!devices.containsKey(deviceId)) return;
-    
+
     setState(() {
       final currentDevice = devices[deviceId];
       if (currentDevice != null) {
@@ -248,13 +385,14 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
     if (topic.isNotEmpty) {
       mqttService.publish(topic, value ? '1' : '0');
     }
-    
+
     await Future.delayed(const Duration(milliseconds: 300));
-    
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${value ? "Nyalakan" : "Matikan"} ${_getDeviceName(deviceId)}'),
+          content: Text(
+              '${value ? "Nyalakan" : "Matikan"} ${_getDeviceName(deviceId)}'),
           duration: const Duration(seconds: 1),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
@@ -315,7 +453,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
         }
       });
     });
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Semua perangkat dimatikan'),
@@ -359,7 +497,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 16),
-                  
+
                   // Header
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -388,7 +526,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                         ],
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(12),
@@ -407,11 +546,15 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                                   width: 7,
                                   height: 7,
                                   decoration: BoxDecoration(
-                                    color: mqttService.isConnected ? Colors.greenAccent : Colors.redAccent,
+                                    color: mqttService.isConnected
+                                        ? Colors.greenAccent
+                                        : Colors.redAccent,
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: mqttService.isConnected ? Colors.greenAccent : Colors.redAccent,
+                                        color: mqttService.isConnected
+                                            ? Colors.greenAccent
+                                            : Colors.redAccent,
                                         blurRadius: 4,
                                         spreadRadius: 1,
                                       ),
@@ -420,7 +563,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  mqttService.isConnected ? 'Online' : 'Offline',
+                                  mqttService.isConnected
+                                      ? 'Online'
+                                      : 'Offline',
                                   style: const TextStyle(
                                     fontSize: 11,
                                     color: Colors.white,
@@ -442,9 +587,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 20),
-                  
+
                   // Sensor Cards
                   Row(
                     children: [
@@ -453,7 +598,10 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                           title: 'Suhu',
                           value: temperature.value.toStringAsFixed(1),
                           unit: '°C',
-                          gradientColors: const [Color(0xFFFF6B6B), Color(0xFFFF8E53)],
+                          gradientColors: const [
+                            Color(0xFFFF6B6B),
+                            Color(0xFFFF8E53)
+                          ],
                           pulseController: _pulseController,
                           isOnline: temperature.isOnline,
                           lastUpdate: temperature.timestamp,
@@ -466,7 +614,10 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                           title: 'Kelembaban',
                           value: humidity.value.toStringAsFixed(0),
                           unit: '%',
-                          gradientColors: const [Color(0xFF4E65FF), Color(0xFF92EFFD)],
+                          gradientColors: const [
+                            Color(0xFF4E65FF),
+                            Color(0xFF92EFFD)
+                          ],
                           pulseController: _pulseController,
                           isOnline: humidity.isOnline,
                           lastUpdate: humidity.timestamp,
@@ -475,9 +626,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 20),
-                  
+
                   // Quick Actions
                   Row(
                     children: [
@@ -493,7 +644,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       Expanded(
                         child: QuickActionButton(
                           icon: Icons.auto_awesome_rounded,
-                          label: isAdaptiveMode ? 'Adaptive ON' : 'Mode Adaptif',
+                          label:
+                              isAdaptiveMode ? 'Adaptive ON' : 'Mode Adaptif',
                           isActive: isAdaptiveMode,
                           onTap: () {
                             setState(() {
@@ -501,11 +653,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                             });
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text(
-                                  isAdaptiveMode 
-                                    ? 'Mode adaptif diaktifkan - Sistem akan menyesuaikan otomatis' 
-                                    : 'Mode adaptif dinonaktifkan'
-                                ),
+                                content: Text(isAdaptiveMode
+                                    ? 'Mode adaptif diaktifkan - Sistem akan menyesuaikan otomatis'
+                                    : 'Mode adaptif dinonaktifkan'),
                                 behavior: SnackBarBehavior.floating,
                                 margin: const EdgeInsets.all(16),
                               ),
@@ -515,9 +665,28 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 24),
-                  
+
+                  // ========== AI STATUS & AUTO CONTROL ==========
+                  if (currentCondition != null && currentRecommendation != null)
+                    AIStatusCard(
+                      condition: currentCondition!,
+                      recommendation: currentRecommendation!,
+                      aiService: aiService,
+                    ),
+
+                  if (currentCondition != null && currentRecommendation != null)
+                    const SizedBox(height: 16),
+
+                  // Auto Control Button
+                  AutoControlButton(
+                    isEnabled: isAutoControlEnabled,
+                    onToggle: toggleAutoControl,
+                  ),
+
+                  const SizedBox(height: 24),
+
                   // Header Kontrol Perangkat
                   const Text(
                     'Kontrol Perangkat',
@@ -528,9 +697,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       letterSpacing: 0.3,
                     ),
                   ),
-                  
+
                   const SizedBox(height: 16),
-                  
+
                   // ========== LANTAI 1 ==========
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 10),
@@ -554,47 +723,50 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       ],
                     ),
                   ),
-                  
+
                   // LED Lantai 1
                   ModernControlCard(
                     title: 'LED Lantai 1',
                     subtitle: 'Smart LED Strip',
                     isOn: devices['led_floor1']?.isOn ?? false,
                     isOnline: devices['led_floor1']?.isOnline ?? false,
-                    lastUpdate: devices['led_floor1']?.lastUpdate ?? DateTime.now(),
+                    lastUpdate:
+                        devices['led_floor1']?.lastUpdate ?? DateTime.now(),
                     onToggle: (value) => toggleDevice('led_floor1', value),
                     activeColor: const Color(0xFFFFA726),
                     icon: '💡',
                   ),
                   const SizedBox(height: 10),
-                  
+
                   // Servo Door
                   ModernControlCard(
                     title: 'Pintu Servo',
                     subtitle: 'Automatic Door',
                     isOn: devices['servo_door']?.isOn ?? false,
                     isOnline: devices['servo_door']?.isOnline ?? false,
-                    lastUpdate: devices['servo_door']?.lastUpdate ?? DateTime.now(),
+                    lastUpdate:
+                        devices['servo_door']?.lastUpdate ?? DateTime.now(),
                     onToggle: (value) => toggleDevice('servo_door', value),
                     activeColor: const Color(0xFF42A5F5),
                     icon: '🚪',
                   ),
                   const SizedBox(height: 10),
-                  
+
                   // Kipas
                   ModernControlCard(
                     title: 'Kipas Angin',
                     subtitle: 'Smart Fan',
                     isOn: devices['fan_floor1']?.isOn ?? false,
                     isOnline: devices['fan_floor1']?.isOnline ?? false,
-                    lastUpdate: devices['fan_floor1']?.lastUpdate ?? DateTime.now(),
+                    lastUpdate:
+                        devices['fan_floor1']?.lastUpdate ?? DateTime.now(),
                     onToggle: (value) => toggleDevice('fan_floor1', value),
                     activeColor: const Color(0xFF26C6DA),
                     icon: '🌀',
                   ),
-                  
+
                   const SizedBox(height: 20),
-                  
+
                   // ========== LANTAI 2 ==========
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 10),
@@ -618,32 +790,34 @@ class _MonitoringScreenState extends State<MonitoringScreen> with TickerProvider
                       ],
                     ),
                   ),
-                  
+
                   // LED 1 Lantai 2
                   ModernControlCard(
                     title: 'LED 1 Lantai 2',
                     subtitle: 'Smart LED Bulb',
                     isOn: devices['led1_floor2']?.isOn ?? false,
                     isOnline: devices['led1_floor2']?.isOnline ?? false,
-                    lastUpdate: devices['led1_floor2']?.lastUpdate ?? DateTime.now(),
+                    lastUpdate:
+                        devices['led1_floor2']?.lastUpdate ?? DateTime.now(),
                     onToggle: (value) => toggleDevice('led1_floor2', value),
                     activeColor: const Color(0xFF66BB6A),
                     icon: '💡',
                   ),
                   const SizedBox(height: 10),
-                  
+
                   // LED 2 Lantai 2
                   ModernControlCard(
                     title: 'LED 2 Lantai 2',
                     subtitle: 'Smart LED Bulb',
                     isOn: devices['led2_floor2']?.isOn ?? false,
                     isOnline: devices['led2_floor2']?.isOnline ?? false,
-                    lastUpdate: devices['led2_floor2']?.lastUpdate ?? DateTime.now(),
+                    lastUpdate:
+                        devices['led2_floor2']?.lastUpdate ?? DateTime.now(),
                     onToggle: (value) => toggleDevice('led2_floor2', value),
                     activeColor: const Color(0xFFAB47BC),
                     icon: '💡',
                   ),
-                  
+
                   const SizedBox(height: 24),
                 ],
               ),
@@ -681,7 +855,7 @@ class ModernSensorCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final diff = now.difference(lastUpdate).inSeconds;
-    
+
     return AnimatedBuilder(
       animation: pulseController,
       builder: (context, child) {
@@ -723,7 +897,8 @@ class ModernSensorCard extends StatelessWidget {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(8),
@@ -735,11 +910,15 @@ class ModernSensorCard extends StatelessWidget {
                           width: 5,
                           height: 5,
                           decoration: BoxDecoration(
-                            color: isOnline ? Colors.greenAccent : Colors.redAccent,
+                            color: isOnline
+                                ? Colors.greenAccent
+                                : Colors.redAccent,
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
-                                color: isOnline ? Colors.greenAccent : Colors.redAccent,
+                                color: isOnline
+                                    ? Colors.greenAccent
+                                    : Colors.redAccent,
                                 blurRadius: 3,
                               ),
                             ],
@@ -838,24 +1017,24 @@ class ModernControlCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final secondsAgo = now.difference(lastUpdate).inSeconds;
-    
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        color: isOn 
-            ? activeColor.withOpacity(0.12) 
+        color: isOn
+            ? activeColor.withOpacity(0.12)
             : Colors.white.withOpacity(0.98),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isOn 
-              ? activeColor.withOpacity(0.3) 
+          color: isOn
+              ? activeColor.withOpacity(0.3)
               : Colors.grey.withOpacity(0.1),
           width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: isOn 
-                ? activeColor.withOpacity(0.15) 
+            color: isOn
+                ? activeColor.withOpacity(0.15)
                 : Colors.black.withOpacity(0.06),
             blurRadius: 8,
             offset: const Offset(0, 3),
@@ -870,20 +1049,20 @@ class ModernControlCard extends StatelessWidget {
               width: 52,
               height: 52,
               decoration: BoxDecoration(
-                color: isOn 
-                    ? activeColor.withOpacity(0.18) 
+                color: isOn
+                    ? activeColor.withOpacity(0.18)
                     : const Color(0xFFF5F7FA),
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: isOn 
-                      ? activeColor.withOpacity(0.2) 
+                  color: isOn
+                      ? activeColor.withOpacity(0.2)
                       : Colors.grey.withOpacity(0.1),
                   width: 1.5,
                 ),
               ),
               child: Center(
                 child: Text(
-                  icon, 
+                  icon,
                   style: const TextStyle(fontSize: 26),
                 ),
               ),
@@ -901,17 +1080,20 @@ class ModernControlCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 17,
                             fontWeight: FontWeight.bold,
-                            color: isOn ? activeColor.darken(0.1) : const Color(0xFF2C3E50),
+                            color: isOn
+                                ? activeColor.darken(0.1)
+                                : const Color(0xFF2C3E50),
                             letterSpacing: 0.2,
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: isOnline 
-                              ? Colors.green.withOpacity(0.12) 
+                          color: isOnline
+                              ? Colors.green.withOpacity(0.12)
                               : Colors.red.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
@@ -920,7 +1102,8 @@ class ModernControlCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.bold,
-                            color: isOnline ? Colors.green[700] : Colors.red[700],
+                            color:
+                                isOnline ? Colors.green[700] : Colors.red[700],
                           ),
                         ),
                       ),
@@ -939,10 +1122,11 @@ class ModernControlCard extends StatelessWidget {
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: isOn 
-                              ? activeColor.withOpacity(0.15) 
+                          color: isOn
+                              ? activeColor.withOpacity(0.15)
                               : Colors.grey.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(4),
                         ),
@@ -951,7 +1135,9 @@ class ModernControlCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
-                            color: isOn ? activeColor.darken(0.2) : Colors.grey[600],
+                            color: isOn
+                                ? activeColor.darken(0.2)
+                                : Colors.grey[600],
                           ),
                         ),
                       ),
@@ -1010,12 +1196,12 @@ class QuickActionButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
         decoration: BoxDecoration(
-          color: isActive 
+          color: isActive
               ? Colors.white.withOpacity(0.25)
               : Colors.white.withOpacity(0.12),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isActive 
+            color: isActive
                 ? Colors.white.withOpacity(0.4)
                 : Colors.white.withOpacity(0.2),
             width: 1.2,
@@ -1025,8 +1211,8 @@ class QuickActionButton extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              icon, 
-              color: Colors.white, 
+              icon,
+              color: Colors.white,
               size: 19,
             ),
             const SizedBox(width: 8),
@@ -1049,11 +1235,253 @@ class QuickActionButton extends StatelessWidget {
   }
 }
 
+// ========== AI STATUS CARD ==========
+class AIStatusCard extends StatelessWidget {
+  final EnvironmentCondition condition;
+  final AIRecommendation recommendation;
+  final AIService aiService;
+
+  const AIStatusCard({
+    super.key,
+    required this.condition,
+    required this.recommendation,
+    required this.aiService,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final emoji = aiService.getConditionEmoji(condition);
+    final colorValue = aiService.getConditionColor(condition);
+    final color = Color(colorValue);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.2),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(
+          color: color.withOpacity(0.3),
+          width: 2,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header dengan kondisi
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  emoji,
+                  style: const TextStyle(fontSize: 24),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      recommendation.title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: color.darken(0.2),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'AI Classification',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: color.darken(0.3),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Deskripsi
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              recommendation.description,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[800],
+                height: 1.4,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // Rekomendasi Actions
+          Text(
+            'Rekomendasi:',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[700],
+            ),
+          ),
+          const SizedBox(height: 6),
+
+          ...recommendation.actions.map((action) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 5),
+                      width: 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        action,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[700],
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+// ========== AUTO CONTROL BUTTON ==========
+class AutoControlButton extends StatelessWidget {
+  final bool isEnabled;
+  final VoidCallback onToggle;
+
+  const AutoControlButton({
+    super.key,
+    required this.isEnabled,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onToggle,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: isEnabled
+                ? [const Color(0xFF4CAF50), const Color(0xFF66BB6A)]
+                : [const Color(0xFF757575), const Color(0xFF9E9E9E)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: isEnabled
+                  ? const Color(0xFF4CAF50).withOpacity(0.4)
+                  : Colors.black26,
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                isEnabled ? Icons.smart_toy : Icons.smart_toy_outlined,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isEnabled ? '🤖 Auto Control AKTIF' : 'Auto Control',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isEnabled
+                        ? 'AI mengontrol perangkat secara otomatis'
+                        : 'Ketuk untuk mengaktifkan kontrol otomatis AI',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withOpacity(0.85),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              isEnabled ? Icons.toggle_on : Icons.toggle_off,
+              color: Colors.white,
+              size: 40,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 extension ColorExtension on Color {
   Color darken(double amount) {
     assert(amount >= 0 && amount <= 1);
     final hsl = HSLColor.fromColor(this);
-    final darkened = hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));
+    final darkened =
+        hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));
     return darkened.toColor();
   }
 }
