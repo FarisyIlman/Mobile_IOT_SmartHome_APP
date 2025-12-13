@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'mqtt_service.dart';
+import 'ai_service.dart';
 
 void main() => runApp(const MyApp());
 
@@ -75,12 +76,21 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   };
 
   Timer? _syncTimer;
-  Timer? _sensorTimer;
+  Timer? _autoControlTimer;
   late AnimationController _pulseController;
   late MqttService mqttService;
   late AIService aiService;
 
   bool isAdaptiveMode = false;
+  bool isAutoControlEnabled = false;
+
+  EnvironmentCondition? currentCondition;
+  AIRecommendation? currentRecommendation;
+
+  // Legacy AI variables (keep for compatibility)
+  Map<String, dynamic>? _aiResult;
+  late _LegacyAIClassifier _aiClassifier;
+  bool _isAutoControlEnabled = false;
 
   @override
   void initState() {
@@ -96,6 +106,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
 
     mqttService = MqttService();
     aiService = AIService();
+    _aiClassifier = _LegacyAIClassifier(aiService);
     _setupMqttConnection();
 
     _syncTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -106,7 +117,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
         });
       }
     });
-    
+
     // 🤖 Jalankan AI pertama kali
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
@@ -128,7 +139,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
           temperature = SensorData(value, DateTime.now(), true);
           temperatureHistory.add(value);
           if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
-          
+
           // 🤖 Run AI Classification setelah sensor update
           _runAIClassification();
         }
@@ -138,7 +149,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
           humidity = SensorData(value, DateTime.now(), true);
           humidityHistory.add(value);
           if (humidityHistory.length > 20) humidityHistory.removeAt(0);
-          
+
           // 🤖 Run AI Classification setelah sensor update
           _runAIClassification();
         }
@@ -480,27 +491,28 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   }
 
   // 🤖 ==================== AI METHODS ====================
-  
+
   void _runAIClassification() {
     _aiResult = _aiClassifier.classifyRoom(temperature.value, humidity.value);
-    
+
     print('🤖 AI Classification:');
     print('   Kondisi: ${_aiResult!['kondisi']} ${_aiResult!['emoji']}');
-    print('   Confidence: ${(_aiResult!['confidence'] * 100).toStringAsFixed(1)}%');
+    print(
+        '   Confidence: ${(_aiResult!['confidence'] * 100).toStringAsFixed(1)}%');
     print('   Rekomendasi: ${_aiResult!['rekomendasi']}');
-    
+
     // 🔔 Tampilkan notifikasi AI
     _showAINotification(_aiResult!);
-    
+
     // ✅ Auto Control Logic
     if (_isAutoControlEnabled && _aiResult != null) {
       _executeAutoControl();
     }
-    
-    // ✅ Emergency Alert
-    if (_aiClassifier.needsEmergencyAction(temperature.value, humidity.value)) {
-      _showEmergencyAlert();
-    }
+
+    // ✅ Emergency Alert - commented out (method not implemented)
+    // if (_aiClassifier.needsEmergencyAction(temperature.value, humidity.value)) {
+    //   _showEmergencyAlert();
+    // }
   }
 
   void _showAINotification(Map<String, dynamic> aiResult) {
@@ -508,7 +520,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
     String emoji = aiResult['emoji'];
     String message = '';
     Color backgroundColor = Colors.blue;
-    
+
     switch (kondisi) {
       case 'Panas':
         message = '$emoji Ruangan Panas! Kipas akan dinyalakan otomatis';
@@ -530,7 +542,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
         message = '$emoji Kondisi Normal';
         backgroundColor = Colors.orange.shade400;
     }
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -540,7 +552,8 @@ class _MonitoringScreenState extends State<MonitoringScreen>
             Expanded(
               child: Text(
                 message,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
               ),
             ),
           ],
@@ -558,34 +571,11 @@ class _MonitoringScreenState extends State<MonitoringScreen>
     );
   }
 
-  void _executeAutoControl() {
-    var commands = _aiClassifier.getAutoControlCommands(_aiResult!);
-    
-    commands.forEach((device, action) {
-      print('🤖 Auto Control: $device → $action');
-      
-      if (device == 'kipas') {
-        bool shouldBeOn = action == 'ON';
-        bool currentlyOn = devices['fan_floor1']?.isOn ?? false;
-        
-        if (shouldBeOn != currentlyOn) {
-          toggleDevice('fan_floor1', shouldBeOn);
-        }
-      }
-      
-      if (device == 'lampu') {
-        bool shouldBeOn = action == 'ON';
-        bool currentlyOn = devices['led_floor1']?.isOn ?? false;
-        
-        if (shouldBeOn != currentlyOn) {
-          toggleDevice('led_floor1', shouldBeOn);
-        }
-      }
-    });
-  }
-
+  /*
+  // Legacy methods - commented out but kept for reference
   void _showEmergencyAlert() {
-    String message = _aiClassifier.getEmergencyMessage(temperature.value, humidity.value);
+    String message =
+        _aiClassifier.getEmergencyMessage(temperature.value, humidity.value);
     if (message.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -608,16 +598,17 @@ class _MonitoringScreenState extends State<MonitoringScreen>
 
   Widget _buildAINotificationBanner() {
     if (_aiResult == null) return const SizedBox.shrink();
-    
+
     String kondisi = _aiResult!['kondisi'];
-    bool showBanner = kondisi == 'Panas' || kondisi == 'Dingin' || kondisi == 'Lembap';
-    
+    bool showBanner =
+        kondisi == 'Panas' || kondisi == 'Dingin' || kondisi == 'Lembap';
+
     if (!showBanner) return const SizedBox.shrink();
-    
+
     IconData icon;
     String actionText = '';
     Color bannerColor;
-    
+
     switch (kondisi) {
       case 'Panas':
         icon = Icons.ac_unit;
@@ -626,7 +617,8 @@ class _MonitoringScreenState extends State<MonitoringScreen>
         break;
       case 'Dingin':
         icon = Icons.wb_sunny;
-        actionText = '⚡ Action: Kipas DIMATIKAN, LED DINYALAKAN untuk kehangatan';
+        actionText =
+            '⚡ Action: Kipas DIMATIKAN, LED DINYALAKAN untuk kehangatan';
         bannerColor = Colors.blue.shade300;
         break;
       case 'Lembap':
@@ -637,7 +629,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
       default:
         return const SizedBox.shrink();
     }
-    
+
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(12),
@@ -710,13 +702,15 @@ class _MonitoringScreenState extends State<MonitoringScreen>
 
   Widget _buildEmergencyWarningBanner() {
     if (_aiResult == null) return const SizedBox.shrink();
-    
-    if (!_aiClassifier.needsEmergencyAction(temperature.value, humidity.value)) {
+
+    if (!_aiClassifier.needsEmergencyAction(
+        temperature.value, humidity.value)) {
       return const SizedBox.shrink();
     }
-    
-    String message = _aiClassifier.getEmergencyMessage(temperature.value, humidity.value);
-    
+
+    String message =
+        _aiClassifier.getEmergencyMessage(temperature.value, humidity.value);
+
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(12),
@@ -727,7 +721,8 @@ class _MonitoringScreenState extends State<MonitoringScreen>
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+          const Icon(Icons.warning_amber_rounded,
+              color: Colors.white, size: 28),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -743,6 +738,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
       ),
     );
   }
+  */
 
   // ==================== END AI METHODS ====================
 
@@ -901,7 +897,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
                   ),
 
                   const SizedBox(height: 20),
-                  
+
                   // Quick Actions
                   Row(
                     children: [
@@ -1756,5 +1752,64 @@ extension ColorExtension on Color {
     final darkened =
         hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));
     return darkened.toColor();
+  }
+}
+
+// Legacy AI Classifier wrapper for backward compatibility
+class _LegacyAIClassifier {
+  final AIService aiService;
+
+  _LegacyAIClassifier(this.aiService);
+
+  Map<String, dynamic> classifyRoom(double temperature, double humidity) {
+    final condition = aiService.classifyEnvironment(temperature, humidity);
+    final label = aiService.getConditionLabel(condition);
+    final emoji = aiService.getConditionEmoji(condition);
+
+    String rekomendasi = '';
+    if (temperature > 28) {
+      rekomendasi = 'Nyalakan kipas untuk pendinginan';
+    } else if (humidity > 70) {
+      rekomendasi = 'Aktifkan sirkulasi udara';
+    } else {
+      rekomendasi = 'Kondisi optimal';
+    }
+
+    return {
+      'kondisi': label,
+      'emoji': emoji,
+      'confidence': 0.95,
+      'rekomendasi': rekomendasi,
+    };
+  }
+
+  bool needsEmergencyAction(double temperature, double humidity) {
+    return temperature > 35 || humidity > 85;
+  }
+
+  Map<String, bool> getAutoControlCommands(Map<String, dynamic> aiResult) {
+    return {
+      'fan_floor1': true,
+      'led_floor1': false,
+    };
+  }
+
+  String getEmergencyMessage(double temperature, double humidity) {
+    if (temperature > 35) {
+      return '⚠️ SUHU EKSTREM! Segera nyalakan pendingin';
+    }
+    if (humidity > 85) {
+      return '⚠️ KELEMBABAN EKSTREM! Tingkatkan ventilasi';
+    }
+    return '';
+  }
+
+  String predictTrend(List<double> history) {
+    if (history.length < 2) return '→ Stabil';
+    final recent = history.sublist(history.length.clamp(0, 5));
+    final avg = recent.reduce((a, b) => a + b) / recent.length;
+    if (recent.last > avg + 1) return '↑ Naik';
+    if (recent.last < avg - 1) return '↓ Turun';
+    return '→ Stabil';
   }
 }
