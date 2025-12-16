@@ -90,7 +90,7 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   // Legacy AI variables (keep for compatibility)
   Map<String, dynamic>? _aiResult;
   late _LegacyAIClassifier _aiClassifier;
-  bool _isAutoControlEnabled = false;
+  final bool _isAutoControlEnabled = false;
 
   @override
   void initState() {
