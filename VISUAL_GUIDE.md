@@ -251,7 +251,7 @@ Compare dengan current state:
  - Kipas: OFF → perlu ubah ke ON
  - Lampu: OFF → sudah sesuai
    ↓
-toggleDevice('fan_floor1', true)
+toggleDevice('kipas', true)
    ↓
 MQTT publish: kelompok/iot/perintah/fan → "1"
    ↓

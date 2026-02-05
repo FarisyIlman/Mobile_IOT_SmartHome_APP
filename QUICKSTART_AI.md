@@ -177,7 +177,7 @@ static const int DARK_HOUR_END = 6;    // 6 AM
 Saat auto control aktif, akan ada logs:
 ```
 📨 MQTT Message: kelompok/iot/sensor/suhu => 30.0
-🤖 AI Decision: fan_floor1 -> ON
+🤖 AI Decision: kipas -> ON
 ✅ Command sent: kelompok/iot/perintah/fan -> 1
 ```
 

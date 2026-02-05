@@ -189,48 +189,38 @@ class AIService {
     switch (condition) {
       case EnvironmentCondition.comfortable:
         // Kondisi nyaman: matikan kipas, kontrol lampu berdasarkan waktu
-        actions['fan_floor1'] = false;
-        actions['led_floor1'] = isDark;
-        actions['led1_floor2'] = isDark;
-        actions['led2_floor2'] = isDark;
+        actions['kipas'] = false;
+        actions['lampu'] = isDark;
         reason =
             'Kondisi nyaman. Kipas dimatikan, lampu disesuaikan dengan waktu.';
         break;
 
       case EnvironmentCondition.normal:
         // Kondisi normal: pertahankan kipas mati, kontrol lampu
-        actions['fan_floor1'] = false;
-        actions['led_floor1'] = isDark;
-        actions['led1_floor2'] = isDark;
-        actions['led2_floor2'] = isDark;
+        actions['kipas'] = false;
+        actions['lampu'] = isDark;
         reason =
             'Kondisi normal. Kipas tetap mati, lampu disesuaikan dengan waktu.';
         break;
 
       case EnvironmentCondition.hot:
         // Panas: nyalakan kipas, kontrol lampu
-        actions['fan_floor1'] = true;
-        actions['led_floor1'] = isDark;
-        actions['led1_floor2'] = isDark;
-        actions['led2_floor2'] = isDark;
+        actions['kipas'] = true;
+        actions['lampu'] = isDark;
         reason = 'Suhu tinggi! Kipas dinyalakan untuk pendinginan.';
         break;
 
       case EnvironmentCondition.humid:
         // Lembab: nyalakan kipas untuk sirkulasi
-        actions['fan_floor1'] = true;
-        actions['led_floor1'] = isDark;
-        actions['led1_floor2'] = isDark;
-        actions['led2_floor2'] = isDark;
+        actions['kipas'] = true;
+        actions['lampu'] = isDark;
         reason = 'Kelembaban tinggi! Kipas dinyalakan untuk sirkulasi udara.';
         break;
 
       case EnvironmentCondition.hotHumid:
         // Panas & Lembab: nyalakan semua kipas
-        actions['fan_floor1'] = true;
-        actions['led_floor1'] = isDark;
-        actions['led1_floor2'] = isDark;
-        actions['led2_floor2'] = isDark;
+        actions['kipas'] = true;
+        actions['lampu'] = isDark;
         reason = 'Kondisi panas dan lembab! Kipas dinyalakan maksimal.';
         break;
     }

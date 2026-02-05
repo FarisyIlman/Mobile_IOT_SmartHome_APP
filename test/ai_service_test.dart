@@ -121,10 +121,8 @@ void main() {
       final humidity = 55.0;
       final currentTime = DateTime(2025, 12, 10, 14, 0); // 2 PM (siang)
       final currentStates = {
-        'led_floor1': false,
-        'fan_floor1': false,
-        'led1_floor2': false,
-        'led2_floor2': false,
+        'lampu': false,
+        'kipas': false,
       };
 
       // Act
@@ -137,8 +135,8 @@ void main() {
 
       // Assert
       expect(
-          decision.deviceActions['fan_floor1'], true); // Kipas ON karena panas
-      expect(decision.deviceActions['led_floor1'],
+          decision.deviceActions['kipas'], true); // Kipas ON karena panas
+      expect(decision.deviceActions['lampu'],
           false); // Lampu OFF karena siang
       expect(decision.reason, contains('Suhu tinggi'));
     });
@@ -149,10 +147,8 @@ void main() {
       final humidity = 55.0;
       final currentTime = DateTime(2025, 12, 10, 20, 0); // 8 PM (malam)
       final currentStates = {
-        'led_floor1': false,
-        'fan_floor1': false,
-        'led1_floor2': false,
-        'led2_floor2': false,
+        'lampu': false,
+        'kipas': false,
       };
 
       // Act
@@ -165,11 +161,9 @@ void main() {
 
       // Assert
       expect(
-          decision.deviceActions['fan_floor1'], true); // Kipas ON karena panas
+          decision.deviceActions['kipas'], true); // Kipas ON karena panas
       expect(
-          decision.deviceActions['led_floor1'], true); // Lampu ON karena malam
-      expect(decision.deviceActions['led1_floor2'], true);
-      expect(decision.deviceActions['led2_floor2'], true);
+          decision.deviceActions['lampu'], true); // Lampu ON karena malam
     });
 
     test('Auto Control - Kondisi nyaman di malam hari', () {
@@ -178,10 +172,8 @@ void main() {
       final humidity = 50.0;
       final currentTime = DateTime(2025, 12, 10, 20, 0); // 8 PM (malam)
       final currentStates = {
-        'led_floor1': false,
-        'fan_floor1': false,
-        'led1_floor2': false,
-        'led2_floor2': false,
+        'lampu': false,
+        'kipas': false,
       };
 
       // Act
@@ -193,10 +185,10 @@ void main() {
       );
 
       // Assert
-      expect(decision.deviceActions['fan_floor1'],
+      expect(decision.deviceActions['kipas'],
           false); // Kipas OFF karena nyaman
       expect(
-          decision.deviceActions['led_floor1'], true); // Lampu ON karena malam
+          decision.deviceActions['lampu'], true); // Lampu ON karena malam
       expect(decision.reason, contains('nyaman'));
     });
 
@@ -206,8 +198,8 @@ void main() {
       final humidity = 75.0;
       final currentTime = DateTime(2025, 12, 10, 14, 0);
       final currentStates = {
-        'led_floor1': false,
-        'fan_floor1': false,
+        'lampu': false,
+        'kipas': false,
       };
 
       // Act
@@ -219,7 +211,7 @@ void main() {
       );
 
       // Assert
-      expect(decision.deviceActions['fan_floor1'],
+      expect(decision.deviceActions['kipas'],
           true); // Kipas ON untuk sirkulasi
       expect(decision.reason, contains('Kelembaban tinggi'));
     });

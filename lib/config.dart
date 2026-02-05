@@ -2,25 +2,17 @@ class AppConfig {
   // ⬇️ KONFIGURASI SERVER ANDA ⬇️
   
   // MQTT Configuration
-  static const String MQTT_BROKER = '192.168.1.100';
-  static const int MQTT_PORT = 1883;
+  // Edit MQTT_BROKER dan MQTT_PORT di mqtt_service.dart
+  // static const String MQTT_BROKER = '192.168.1.100';  // ❌ Tidak digunakan
+  // static const int MQTT_PORT = 1883;                   // ❌ Tidak digunakan
   
-  // REST API Configuration (jika dibutuhkan)
-  static const String API_HOST = '192.168.1.100';
-  static const int API_PORT = 3000;
+  // REST API Configuration (Laravel)
+  static const String API_HOST = '192.168.141.138';
+  static const int API_PORT = 8000;
   static const String API_BASE_URL = 'http://$API_HOST:$API_PORT/api';
   
-  // MQTT Topics
-  static const String TOPIC_SUHU = "kelompok/iot/sensor/suhu";
-  static const String TOPIC_LEMBAP = "kelompok/iot/sensor/kelembapan";
-  
-  static const String TOPIC_CMD_LAMPU_FLOOR1 = "kelompok/iot/perintah/lampu_floor1";
-  static const String TOPIC_CMD_LAMPU_FLOOR2 = "kelompok/iot/perintah/lampu_floor2";
-  static const String TOPIC_CMD_CURTAIN = "kelompok/iot/perintah/curtain_floor1";
-  
-  static const String TOPIC_STATUS_LAMPU_FLOOR1 = "kelompok/iot/status/lampu_floor1";
-  static const String TOPIC_STATUS_LAMPU_FLOOR2 = "kelompok/iot/status/lampu_floor2";
-  static const String TOPIC_STATUS_CURTAIN = "kelompok/iot/status/curtain_floor1";
+  // MQTT Topics - Didefinisikan di mqtt_service.dart
+  // Gunakan MqttService.TOPIC_* untuk akses topic
   
   // Timeout Configuration
   static const Duration API_TIMEOUT = Duration(seconds: 10);

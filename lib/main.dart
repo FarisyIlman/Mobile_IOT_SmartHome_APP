@@ -9,7 +9,7 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) {  
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Smart Home Monitoring',
@@ -45,7 +45,9 @@ class DeviceState {
 }
 
 class MonitoringScreen extends StatefulWidget {
-  const MonitoringScreen({super.key});
+  const MonitoringScreen({super.key, this.enableBackgroundTasks = true});
+
+  final bool enableBackgroundTasks;
 
   @override
   State<MonitoringScreen> createState() => _MonitoringScreenState();
@@ -53,6 +55,10 @@ class MonitoringScreen extends StatefulWidget {
 
 class _MonitoringScreenState extends State<MonitoringScreen>
     with TickerProviderStateMixin {
+  // Timeout untuk mendeteksi offline (dalam detik)
+  static const int SENSOR_TIMEOUT_SECONDS = 10;
+  static const int DEVICE_TIMEOUT_SECONDS = 15;
+  
   final List<double> temperatureHistory = [25.5];
   final List<double> humidityHistory = [60.0];
 
@@ -61,22 +67,17 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   DateTime lastSync = DateTime.now();
 
   Map<String, DeviceState> devices = {
-    // Lantai 1
-    'led_floor1':
+    'lampu':
         DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'servo_door':
+    'kunci':
         DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'fan_floor1':
-        DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    // Lantai 2
-    'led1_floor2':
-        DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
-    'led2_floor2':
+    'kipas':
         DeviceState(isOn: false, isOnline: true, lastUpdate: DateTime.now()),
   };
 
   Timer? _syncTimer;
   Timer? _autoControlTimer;
+  Timer? _initialAiTimer;
   late AnimationController _pulseController;
   late MqttService mqttService;
   late AIService aiService;
@@ -90,7 +91,6 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   // Legacy AI variables (keep for compatibility)
   Map<String, dynamic>? _aiResult;
   late _LegacyAIClassifier _aiClassifier;
-  final bool _isAutoControlEnabled = false;
 
   @override
   void initState() {
@@ -107,23 +107,27 @@ class _MonitoringScreenState extends State<MonitoringScreen>
     mqttService = MqttService();
     aiService = AIService();
     _aiClassifier = _LegacyAIClassifier(aiService);
-    _setupMqttConnection();
 
-    _syncTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        setState(() {
-          lastSync = DateTime.now();
-          _updateAIAnalysis();
-        });
-      }
-    });
+    if (widget.enableBackgroundTasks) {
+      _setupMqttConnection();
 
-    // 🤖 Jalankan AI pertama kali
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        _runAIClassification();
-      }
-    });
+      _syncTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (mounted) {
+          setState(() {
+            lastSync = DateTime.now();
+            _updateAIAnalysis();
+            _checkOnlineStatus(); // Check status online/offline
+          });
+        }
+      });
+
+      // 🤖 Jalankan AI pertama kali (gunakan Timer supaya bisa di-cancel di dispose)
+      _initialAiTimer = Timer(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _runAIClassification();
+        }
+      });
+    }
   }
 
   void _setupMqttConnection() async {
@@ -135,68 +139,53 @@ class _MonitoringScreenState extends State<MonitoringScreen>
       setState(() {
         // Sensor Data
         if (topic == MqttService.TOPIC_SUHU) {
-          final value = double.tryParse(msg) ?? 0;
-          temperature = SensorData(value, DateTime.now(), true);
-          temperatureHistory.add(value);
-          if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
+          final value = double.tryParse(msg) ?? temperature.value;
+          temperature = SensorData(value, DateTime.now(), true); // Set online saat terima data
+          if (value > 0) { // Hanya tambah ke history jika valid
+            temperatureHistory.add(value);
+            if (temperatureHistory.length > 20) temperatureHistory.removeAt(0);
+          }
 
           // 🤖 Run AI Classification setelah sensor update
           _runAIClassification();
         }
 
         if (topic == MqttService.TOPIC_LEMBAP) {
-          final value = double.tryParse(msg) ?? 0;
-          humidity = SensorData(value, DateTime.now(), true);
-          humidityHistory.add(value);
-          if (humidityHistory.length > 20) humidityHistory.removeAt(0);
+          final value = double.tryParse(msg) ?? humidity.value;
+          humidity = SensorData(value, DateTime.now(), true); // Set online saat terima data
+          if (value > 0) { // Hanya tambah ke history jika valid
+            humidityHistory.add(value);
+            if (humidityHistory.length > 20) humidityHistory.removeAt(0);
+          }
 
           // 🤖 Run AI Classification setelah sensor update
           _runAIClassification();
         }
 
-        // Device Status - Lantai 1
-        if (topic == MqttService.TOPIC_STATUS_LED_FLOOR1) {
+        // Device Status
+        if (topic == MqttService.TOPIC_STATUS_LAMPU) {
           final isOn = msg == "1" || msg.toLowerCase() == "on";
-          devices['led_floor1'] = DeviceState(
+          devices['lampu'] = DeviceState(
             isOn: isOn,
-            isOnline: true,
+            isOnline: true, // Set online saat terima status
             lastUpdate: DateTime.now(),
           );
         }
 
-        if (topic == MqttService.TOPIC_STATUS_SERVO_DOOR) {
+        if (topic == MqttService.TOPIC_STATUS_KUNCI) {
           final isOn = msg == "1" || msg.toLowerCase() == "open";
-          devices['servo_door'] = DeviceState(
+          devices['kunci'] = DeviceState(
             isOn: isOn,
-            isOnline: true,
+            isOnline: true, // Set online saat terima status
             lastUpdate: DateTime.now(),
           );
         }
 
-        if (topic == MqttService.TOPIC_STATUS_FAN) {
+        if (topic == MqttService.TOPIC_STATUS_KIPAS) {
           final isOn = msg == "1" || msg.toLowerCase() == "on";
-          devices['fan_floor1'] = DeviceState(
+          devices['kipas'] = DeviceState(
             isOn: isOn,
-            isOnline: true,
-            lastUpdate: DateTime.now(),
-          );
-        }
-
-        // Device Status - Lantai 2
-        if (topic == MqttService.TOPIC_STATUS_LED1_FLOOR2) {
-          final isOn = msg == "1" || msg.toLowerCase() == "on";
-          devices['led1_floor2'] = DeviceState(
-            isOn: isOn,
-            isOnline: true,
-            lastUpdate: DateTime.now(),
-          );
-        }
-
-        if (topic == MqttService.TOPIC_STATUS_LED2_FLOOR2) {
-          final isOn = msg == "1" || msg.toLowerCase() == "on";
-          devices['led2_floor2'] = DeviceState(
-            isOn: isOn,
-            isOnline: true,
+            isOnline: true, // Set online saat terima status
             lastUpdate: DateTime.now(),
           );
         }
@@ -235,6 +224,37 @@ class _MonitoringScreenState extends State<MonitoringScreen>
         );
       }
     }
+  }
+
+  // ========== ONLINE STATUS CHECK ==========
+
+  void _checkOnlineStatus() {
+    final now = DateTime.now();
+    
+    // Check sensor online status
+    final tempDiff = now.difference(temperature.timestamp).inSeconds;
+    final humidDiff = now.difference(humidity.timestamp).inSeconds;
+    
+    if (tempDiff > SENSOR_TIMEOUT_SECONDS && temperature.isOnline) {
+      temperature = SensorData(temperature.value, temperature.timestamp, false);
+    }
+    
+    if (humidDiff > SENSOR_TIMEOUT_SECONDS && humidity.isOnline) {
+      humidity = SensorData(humidity.value, humidity.timestamp, false);
+    }
+    
+    // Check device online status
+    devices.forEach((deviceId, deviceState) {
+      final diff = now.difference(deviceState.lastUpdate).inSeconds;
+      if (diff > DEVICE_TIMEOUT_SECONDS && deviceState.isOnline) {
+        devices[deviceId] = DeviceState(
+          isOn: deviceState.isOn,
+          isOnline: false,
+          lastUpdate: deviceState.lastUpdate,
+          errorMessage: 'Device tidak merespon',
+        );
+      }
+    });
   }
 
   // ========== AI ANALYSIS & AUTO CONTROL ==========
@@ -361,6 +381,8 @@ class _MonitoringScreenState extends State<MonitoringScreen>
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _autoControlTimer?.cancel();
+    _initialAiTimer?.cancel();
     _pulseController.dispose();
     mqttService.disconnect();
     super.dispose();
@@ -382,25 +404,24 @@ class _MonitoringScreenState extends State<MonitoringScreen>
 
     String topic = '';
     switch (deviceId) {
-      case 'led_floor1':
-        topic = MqttService.TOPIC_CMD_LED_FLOOR1;
+      case 'lampu':
+        topic = MqttService.TOPIC_CMD_LAMPU;
         break;
-      case 'servo_door':
-        topic = MqttService.TOPIC_CMD_SERVO_DOOR;
+      case 'kunci':
+        topic = MqttService.TOPIC_CMD_KUNCI;
         break;
-      case 'fan_floor1':
-        topic = MqttService.TOPIC_CMD_FAN;
-        break;
-      case 'led1_floor2':
-        topic = MqttService.TOPIC_CMD_LED1_FLOOR2;
-        break;
-      case 'led2_floor2':
-        topic = MqttService.TOPIC_CMD_LED2_FLOOR2;
+      case 'kipas':
+        topic = MqttService.TOPIC_CMD_KIPAS;
         break;
     }
 
     if (topic.isNotEmpty) {
-      mqttService.publish(topic, value ? '1' : '0');
+      if (topic == MqttService.TOPIC_CMD_KUNCI) {
+        mqttService.publish(topic, value ? 'BUKA' : 'KUNCI');        
+      } else {
+      mqttService.publish(topic, value ? 'ON' : 'OFF');
+    }
+      
     }
 
     await Future.delayed(const Duration(milliseconds: 300));
@@ -420,16 +441,12 @@ class _MonitoringScreenState extends State<MonitoringScreen>
 
   String _getDeviceName(String deviceId) {
     switch (deviceId) {
-      case 'led_floor1':
-        return 'LED Lantai 1';
-      case 'servo_door':
-        return 'Pintu Servo';
-      case 'fan_floor1':
+      case 'lampu':
+        return 'Lampu';
+      case 'kunci':
+        return 'Kunci Pintu';
+      case 'kipas':
         return 'Kipas';
-      case 'led1_floor2':
-        return 'LED 1 Lantai 2';
-      case 'led2_floor2':
-        return 'LED 2 Lantai 2';
       default:
         return deviceId.replaceAll('_', ' ');
     }
@@ -447,27 +464,21 @@ class _MonitoringScreenState extends State<MonitoringScreen>
 
           String topic = '';
           switch (key) {
-            case 'led_floor1':
-              topic = MqttService.TOPIC_CMD_LED_FLOOR1;
+            case 'lampu':
+              topic = MqttService.TOPIC_CMD_LAMPU;
               break;
-            case 'servo_door':
-              topic = MqttService.TOPIC_CMD_SERVO_DOOR;
+            case 'kunci':
+              topic = MqttService.TOPIC_CMD_MODE_KUNCI;
               break;
-            case 'fan_floor1':
-              topic = MqttService.TOPIC_CMD_FAN;
-              break;
-            case 'led1_floor2':
-              topic = MqttService.TOPIC_CMD_LED1_FLOOR2;
-              break;
-            case 'led2_floor2':
-              topic = MqttService.TOPIC_CMD_LED2_FLOOR2;
+            case 'kipas':
+              topic = MqttService.TOPIC_CMD_KIPAS;
               break;
           }
 
           if (topic.isNotEmpty) {
-            mqttService.publish(topic, '0');
+            mqttService.publish(topic, 'OFF');
           }
-        }
+        } 
       });
     });
 
@@ -504,10 +515,10 @@ class _MonitoringScreenState extends State<MonitoringScreen>
     // 🔔 Tampilkan notifikasi AI
     _showAINotification(_aiResult!);
 
-    // ✅ Auto Control Logic
-    if (_isAutoControlEnabled && _aiResult != null) {
-      _executeAutoControl();
-    }
+    // ✅ Auto Control Logic (Disabled - using new AI system)
+    // if (isAutoControlEnabled && _aiResult != null) {
+    //   _executeAutoControl();
+    // }
 
     // ✅ Emergency Alert - commented out (method not implemented)
     // if (_aiClassifier.needsEmergencyAction(temperature.value, humidity.value)) {
@@ -969,19 +980,19 @@ class _MonitoringScreenState extends State<MonitoringScreen>
 
                   const SizedBox(height: 16),
 
-                  // ========== LANTAI 1 ==========
+                  // ========== PERANGKAT ==========
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 10),
                     child: Row(
                       children: [
                         Icon(
-                          Icons.home_rounded,
+                          Icons.devices_rounded,
                           color: Colors.white.withOpacity(0.7),
                           size: 18,
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          'Lantai 1',
+                          'Perangkat IoT',
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
@@ -993,31 +1004,31 @@ class _MonitoringScreenState extends State<MonitoringScreen>
                     ),
                   ),
 
-                  // LED Lantai 1
+                  // Lampu
                   ModernControlCard(
-                    title: 'LED Lantai 1',
-                    subtitle: 'Smart LED Strip',
-                    isOn: devices['led_floor1']?.isOn ?? false,
-                    isOnline: devices['led_floor1']?.isOnline ?? false,
+                    title: 'Lampu',
+                    subtitle: 'Smart LED',
+                    isOn: devices['lampu']?.isOn ?? false,
+                    isOnline: devices['lampu']?.isOnline ?? false,
                     lastUpdate:
-                        devices['led_floor1']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('led_floor1', value),
+                        devices['lampu']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('lampu', value),
                     activeColor: const Color(0xFFFFA726),
                     icon: '💡',
                   ),
                   const SizedBox(height: 10),
 
-                  // Servo Door
+                  // Kunci Pintu
                   ModernControlCard(
-                    title: 'Pintu Servo',
-                    subtitle: 'Automatic Door',
-                    isOn: devices['servo_door']?.isOn ?? false,
-                    isOnline: devices['servo_door']?.isOnline ?? false,
+                    title: 'Kunci Pintu',
+                    subtitle: 'Smart Lock',
+                    isOn: devices['kunci']?.isOn ?? false,
+                    isOnline: devices['kunci']?.isOnline ?? false,
                     lastUpdate:
-                        devices['servo_door']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('servo_door', value),
+                        devices['kunci']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('kunci', value),
                     activeColor: const Color(0xFF42A5F5),
-                    icon: '🚪',
+                    icon: '🔒',
                   ),
                   const SizedBox(height: 10),
 
@@ -1025,66 +1036,13 @@ class _MonitoringScreenState extends State<MonitoringScreen>
                   ModernControlCard(
                     title: 'Kipas Angin',
                     subtitle: 'Smart Fan',
-                    isOn: devices['fan_floor1']?.isOn ?? false,
-                    isOnline: devices['fan_floor1']?.isOnline ?? false,
+                    isOn: devices['kipas']?.isOn ?? false,
+                    isOnline: devices['kipas']?.isOnline ?? false,
                     lastUpdate:
-                        devices['fan_floor1']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('fan_floor1', value),
+                        devices['kipas']?.lastUpdate ?? DateTime.now(),
+                    onToggle: (value) => toggleDevice('kipas', value),
                     activeColor: const Color(0xFF26C6DA),
                     icon: '🌀',
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // ========== LANTAI 2 ==========
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4, bottom: 10),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.stairs_rounded,
-                          color: Colors.white.withOpacity(0.7),
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Lantai 2',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white.withOpacity(0.85),
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // LED 1 Lantai 2
-                  ModernControlCard(
-                    title: 'LED 1 Lantai 2',
-                    subtitle: 'Smart LED Bulb',
-                    isOn: devices['led1_floor2']?.isOn ?? false,
-                    isOnline: devices['led1_floor2']?.isOnline ?? false,
-                    lastUpdate:
-                        devices['led1_floor2']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('led1_floor2', value),
-                    activeColor: const Color(0xFF66BB6A),
-                    icon: '💡',
-                  ),
-                  const SizedBox(height: 10),
-
-                  // LED 2 Lantai 2
-                  ModernControlCard(
-                    title: 'LED 2 Lantai 2',
-                    subtitle: 'Smart LED Bulb',
-                    isOn: devices['led2_floor2']?.isOn ?? false,
-                    isOnline: devices['led2_floor2']?.isOnline ?? false,
-                    lastUpdate:
-                        devices['led2_floor2']?.lastUpdate ?? DateTime.now(),
-                    onToggle: (value) => toggleDevice('led2_floor2', value),
-                    activeColor: const Color(0xFFAB47BC),
-                    icon: '💡',
                   ),
 
                   const SizedBox(height: 24),
@@ -1163,46 +1121,6 @@ class ModernSensorCard extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       color: Colors.white.withOpacity(0.95),
                       letterSpacing: 0.3,
-                    ),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 5,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: isOnline
-                                ? Colors.greenAccent
-                                : Colors.redAccent,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: isOnline
-                                    ? Colors.greenAccent
-                                    : Colors.redAccent,
-                                blurRadius: 3,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          isOnline ? 'Online' : 'Offline',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white.withOpacity(0.9),
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ],
@@ -1353,26 +1271,6 @@ class ModernControlCard extends StatelessWidget {
                                 ? activeColor.darken(0.1)
                                 : const Color(0xFF2C3E50),
                             letterSpacing: 0.2,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: isOnline
-                              ? Colors.green.withOpacity(0.12)
-                              : Colors.red.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          isOnline ? 'Online' : 'Offline',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                            color:
-                                isOnline ? Colors.green[700] : Colors.red[700],
                           ),
                         ),
                       ),
@@ -1789,8 +1687,8 @@ class _LegacyAIClassifier {
 
   Map<String, bool> getAutoControlCommands(Map<String, dynamic> aiResult) {
     return {
-      'fan_floor1': true,
-      'led_floor1': false,
+      'kipas': true,
+      'lampu': false,
     };
   }
 

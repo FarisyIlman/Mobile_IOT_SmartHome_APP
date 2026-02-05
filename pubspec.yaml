@@ -30,12 +30,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  mqtt_client: ^10.2.0
-  http: ^1.1.0
+  mqtt_client: 10.11.3
+  http: ^0.13.6
   cupertino_icons: ^1.0.2
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
 

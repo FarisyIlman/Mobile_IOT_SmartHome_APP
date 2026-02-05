@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
-import 'package:mqtt_client/mqtt_browser_client.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+// Remove web import for now
+// import 'package:mqtt_client/mqtt_browser_client.dart';
+
 
 class MqttService {
   static final MqttService _instance = MqttService._internal();
@@ -17,29 +18,32 @@ class MqttService {
   // --------------------------------------
   // MQTT CONFIGURATION
   // --------------------------------------
-  static const String MQTT_BROKER = 'broker.hivemq.com';  // Public MQTT Broker
+  // Broker MQTT lokal (Laptop)
+  static const String MQTT_BROKER = '192.168.141.138';
   static const int MQTT_PORT = 1883;
   static const String MQTT_WS_URL = 'ws://broker.hivemq.com:8000/mqtt';  // WebSocket untuk Web
 
-  // --------------------------------------
+  // -------------------------------------- 
   // MQTT TOPICS
   // --------------------------------------
+  // --- MQTT TOPICS (PUBLISH dari ESP32 / SUBSCRIBE di Flutter) ---
   static const String TOPIC_SUHU              = "kelompok/iot/sensor/suhu";
   static const String TOPIC_LEMBAP            = "kelompok/iot/sensor/kelembapan";
+  static const String TOPIC_CAHAYA            = "kelompok/iot/sensor/cahaya";
+  static const String TOPIC_WAKTU             = "kelompok/iot/info/waktu";
+  static const String TOPIC_STATUS_LAMPU      = "kelompok/iot/status/lampu";
+  static const String TOPIC_STATUS_KUNCI      = "kelompok/iot/status/kunci";
+  static const String TOPIC_STATUS_KIPAS      = "kelompok/iot/status/kipas";
+  static const String TOPIC_STATUS_MODE_KUNCI = "kelompok/iot/status/modeKunci";
+  static const String TOPIC_STATUS_MODE_KIPAS = "kelompok/iot/status/modeKipas";
+  static const String TOPIC_LOG_KEAMANAN      = "kelompok/iot/log/keamanan";
 
-  // --- Commands ---
-  static const String TOPIC_CMD_LED_FLOOR1      = "kelompok/iot/perintah/led_floor1";
-  static const String TOPIC_CMD_SERVO_DOOR      = "kelompok/iot/perintah/servo_door";
-  static const String TOPIC_CMD_FAN             = "kelompok/iot/perintah/fan";
-  static const String TOPIC_CMD_LED1_FLOOR2     = "kelompok/iot/perintah/led1_floor2";
-  static const String TOPIC_CMD_LED2_FLOOR2     = "kelompok/iot/perintah/led2_floor2";
-
-  // --- Status ---
-  static const String TOPIC_STATUS_LED_FLOOR1   = "kelompok/iot/status/led_floor1";
-  static const String TOPIC_STATUS_SERVO_DOOR   = "kelompok/iot/status/servo_door";
-  static const String TOPIC_STATUS_FAN          = "kelompok/iot/status/fan";
-  static const String TOPIC_STATUS_LED1_FLOOR2  = "kelompok/iot/status/led1_floor2";
-  static const String TOPIC_STATUS_LED2_FLOOR2  = "kelompok/iot/status/led2_floor2";
+  // --- MQTT TOPICS (SUBSCRIBE dari ESP32 / PUBLISH dari Flutter) ---
+  static const String TOPIC_CMD_KUNCI         = "kelompok/iot/perintah/kunci";
+  static const String TOPIC_CMD_LAMPU         = "kelompok/iot/perintah/lampu";
+  static const String TOPIC_CMD_KIPAS         = "kelompok/iot/perintah/kipas";
+  static const String TOPIC_CMD_MODE_KUNCI    = "kelompok/iot/perintah/modeKunci";
+  static const String TOPIC_CMD_MODE_KIPAS    = "kelompok/iot/perintah/modeKipas";
 
   // --------------------------------------
   // CONNECT TO MQTT BROKER
@@ -50,17 +54,17 @@ class MqttService {
       
       print('🔌 Creating MQTT Client...');
       
-      // Gunakan WebSocket untuk Web, TCP untuk Mobile/Desktop
-      if (kIsWeb) {
-        print('🌐 Platform: Web (using WebSocket)');
-        print('📍 Broker: $MQTT_WS_URL');
-        client = MqttBrowserClient(MQTT_WS_URL, clientId);
-      } else {
+      // Use TCP only for now (mobile/desktop)
+      // if (kIsWeb) {
+      //   print('🌐 Platform: Web (using WebSocket)');
+      //   print('📍 Broker: $MQTT_WS_URL');
+      //   client = MqttBrowserClient(MQTT_WS_URL, clientId);
+      // } else {
         print('📱 Platform: Mobile/Desktop (using TCP)');
         print('📍 Broker: $MQTT_BROKER:$MQTT_PORT');
         client = MqttServerClient(MQTT_BROKER, clientId);
         (client as MqttServerClient).port = MQTT_PORT;
-      }
+      // }
       
       print('🆔 Client ID: $clientId');
       
@@ -137,15 +141,20 @@ class MqttService {
     // Subscribe to sensor topics
     subscribe(TOPIC_SUHU);
     subscribe(TOPIC_LEMBAP);
+    subscribe(TOPIC_CAHAYA);
 
-    // Subscribe to device status topics - Lantai 1
-    subscribe(TOPIC_STATUS_LED_FLOOR1);
-    subscribe(TOPIC_STATUS_SERVO_DOOR);
-    subscribe(TOPIC_STATUS_FAN);
+    // Subscribe to info topics
+    subscribe(TOPIC_WAKTU);
+
+    // Subscribe to device status topics
+    subscribe(TOPIC_STATUS_LAMPU);
+    subscribe(TOPIC_STATUS_KUNCI);
+    subscribe(TOPIC_STATUS_KIPAS);
+    subscribe(TOPIC_STATUS_MODE_KUNCI);
+    subscribe(TOPIC_STATUS_MODE_KIPAS);
     
-    // Subscribe to device status topics - Lantai 2
-    subscribe(TOPIC_STATUS_LED1_FLOOR2);
-    subscribe(TOPIC_STATUS_LED2_FLOOR2);
+    // Subscribe to log topics
+    subscribe(TOPIC_LOG_KEAMANAN);
 
     print('✅ All subscriptions completed');
   }
@@ -322,12 +331,20 @@ class MqttService {
   // GET SUBSCRIBED TOPICS
   // --------------------------------------
   List<String> getSubscribedTopics() {
-    if (client != null && client!.subscriptionsManager != null) {
-      return client!.subscriptionsManager!.subscriptions.keys
-          .map((key) => key.toString())
-          .toList();
-    }
-    return [];
+    // Note: subscriptionsManager is protected in mqtt_client
+    // We'll maintain our own list of subscribed topics
+    return [
+      TOPIC_SUHU,
+      TOPIC_LEMBAP,
+      TOPIC_CAHAYA,
+      TOPIC_WAKTU,
+      TOPIC_STATUS_LAMPU,
+      TOPIC_STATUS_KUNCI,
+      TOPIC_STATUS_KIPAS,
+      TOPIC_STATUS_MODE_KUNCI,
+      TOPIC_STATUS_MODE_KIPAS,
+      TOPIC_LOG_KEAMANAN,
+    ];
   }
 
   // --------------------------------------

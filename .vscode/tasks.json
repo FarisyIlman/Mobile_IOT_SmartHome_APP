@@ -1,0 +1,67 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "flutter test",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "flutter test (expanded)",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"test",
+				"-r",
+				"expanded",
+				"test/widget_test.dart"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "flutter test (widget_test only)",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"test",
+				"-r",
+				"expanded",
+				"test/widget_test.dart"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "flutter test (all)",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "flutter test (widget_test)",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"test",
+				"test/widget_test.dart"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}
