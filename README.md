@@ -1,6 +1,13 @@
-# flutter_application_2
+# flutter_application_MOBILE_IOT_SMARTHOME_APP
 
-A new Flutter project.
+A new Flutter project 
+sebuah projek dengan Flutter menggunakan bahasa dart yang di gunakan untuk aplikasi kontroling IOT(Smart home) menggunakan ESP32
+
+Super Simple Flowchart
+
+App <--> api <--> DB <--> api <--> Esp32 <--> SERVO/LED/FAN
+
+so by using this app we can monitor temp and humidity and also control to open/close the door, turn on/off the lamp, and turn on/off the fan
 
 ## Getting Started
 
